@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Node (not needed for the Streamlit app)
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local outputs (regenerated at runtime)
+汇总结果/
