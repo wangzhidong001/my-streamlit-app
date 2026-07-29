@@ -751,7 +751,7 @@ def combine_all_products(forecast_results):
     combined = combined.drop(columns=['_sort_persp', '_sort_type'])
     
     print(f"  全产品汇总: {len(combined)} 行")
-    return combined
+    return combined.copy()
 
 
 def calculate_analysis(combined_df, vat_rate=0.13,
@@ -1102,16 +1102,180 @@ def calculate_analysis(combined_df, vat_rate=0.13,
     return result_df
 
 
+def calculate_analysis_fixed(combined_df, vat_rate=0.13, share_csv=None):
+    """固定版通信DC分析计算（复刻 comm_processor.py 第一版逻辑）
+
+    固定筛选：
+        - 产品/行业 = 行业口径
+        - 行业大类   = 通信
+        - DC 口径    = 二级产品分类 = Datacenter
+        - 锐捷       = Vendor = Ruijie
+
+    预测版本选择：
+        - 实际最大年 Quarter 为 Q1~Q3 时，取该季度版本、起始年=最大年
+        - 为 Q4 时，取 Q4 版本、起始年=最大年+1
+
+    输出列（11列）：
+        数据类型、年份、通信全产品容量、通信DC容量、DC占全产品比例、
+        通信DC容量增速、锐捷DC收入、锐捷DC份额、竞争力指数、增值税率、锐捷开票金额
+    """
+    PRODUCT_LINE = '行业口径'
+    INDUSTRY = '通信'
+    DC_CLASS = 'Datacenter'
+    VENDOR_RUIJIE = 'Ruijie'
+    OUT_COLS = [
+        '数据类型', '年份', '通信全产品容量', '通信DC容量', 'DC占全产品比例',
+        '通信DC容量增速', '锐捷DC收入', '锐捷DC份额', '竞争力指数', '增值税率', '锐捷开票金额'
+    ]
+
+    def _pct(x):
+        if x is None or (isinstance(x, float) and pd.isna(x)):
+            return None
+        return round(x * 100, 2)
+
+    def _annual_sum(df):
+        return df.groupby('Year')['Vendor Revenue (CNY M)'].sum()
+
+    base = combined_df[(combined_df['产品/行业'] == PRODUCT_LINE) &
+                       (combined_df['行业大类'] == INDUSTRY)].copy()
+    # 统一 Year 列为数值类型，避免字符串/整数混用导致 groupby 后 .get() 匹配失败
+    base['Year'] = pd.to_numeric(base['Year'], errors='coerce')
+    act = base[base['实际/预测'] == '实际'].copy()
+    fc = base[base['实际/预测'] == '预测'].copy()
+
+    if act.empty:
+        print("  [错误] 无「行业口径/通信/实际」数据")
+        return pd.DataFrame(columns=OUT_COLS)
+
+    # 预测版本/起始年
+    act_years = sorted(act['Year'].dropna().astype(int).unique())
+    ymax = max(act_years)
+    qmax_values = act[act['Year'] == ymax]['Quarter'].dropna().astype(str).unique()
+    qmax = max(qmax_values) if len(qmax_values) > 0 else 'Q4'
+    if qmax in ('Q1', 'Q2', 'Q3'):
+        fver, start_year = qmax, ymax
+    else:
+        fver, start_year = 'Q4', ymax + 1
+    print(f"  实际最大年={ymax}({qmax}) -> 预测版本={fver}, 起始年={start_year}")
+
+    # ---- 3.1 实际数 ----
+    years = sorted(act['Year'].dropna().astype(int).unique())
+    qs = act.groupby('Year')['Quarter'].apply(lambda s: set(s.dropna().astype(str).unique()))
+    label = {y: (str(y) if 'Q4' in qs.get(y, set()) else f"{y}H") for y in years}
+
+    total = _annual_sum(act)
+    dc = _annual_sum(act[act['二级产品分类'] == DC_CLASS])
+    ruijie = _annual_sum(act[(act['二级产品分类'] == DC_CLASS) &
+                             (act['Vendor'] == VENDOR_RUIJIE)])
+
+    recs = {}
+    for y in years:
+        t = float(total.get(y, 0.0))
+        d = float(dc.get(y, 0.0))
+        r = float(ruijie.get(y, 0.0))
+        ratio = (d / t) if t else None
+        share = (r / d) if d else None
+        recs[y] = dict(全产品=t, DC=d, ratio=ratio, ruijie=r, share=share)
+
+    rows = []
+    prev_dc = prev_share = prev_invoice = None
+    for y in years:
+        rec = recs[y]
+        dc_growth = ((rec['DC'] - prev_dc) / prev_dc) if prev_dc not in (None, 0) else None
+        comp_idx = (rec['share'] / prev_share) if prev_share not in (None, 0) else None
+        invoice = rec['ruijie'] * (1 + vat_rate)
+        invoice_yoy = ((invoice - prev_invoice) / prev_invoice) if prev_invoice not in (None, 0) else None
+        rows.append({
+            '数据类型': '实际',
+            '年份': label[y],
+            '通信全产品容量': round(rec['全产品'], 2),
+            '通信DC容量': round(rec['DC'], 2),
+            'DC占全产品比例': _pct(rec['ratio']),
+            '通信DC容量增速': _pct(dc_growth),
+            '锐捷DC收入': round(rec['ruijie'], 2),
+            '锐捷DC份额': _pct(rec['share']),
+            '竞争力指数': None if comp_idx is None else round(comp_idx, 4),
+            '增值税率': round(vat_rate * 100, 2),
+            '锐捷开票金额': round(invoice, 2),
+            '_sort': y,
+        })
+        prev_dc, prev_share, prev_invoice = rec['DC'], rec['share'], invoice
+
+    # ---- 3.2 预测数 ----
+    share_input = None
+    if share_csv and os.path.exists(share_csv):
+        sd = pd.read_csv(share_csv)
+        col_val = sd.columns[1]
+        share_input = {}
+        for _, r in sd.iterrows():
+            y = int(r[sd.columns[0]])
+            v = float(r[col_val])
+            share_input[y] = v / 100.0 if v > 1 else v
+        print(f"  已加载外部份额文件: {share_csv}")
+
+    fc_sel = fc[(fc['预测版本'].astype(str) == fver) &
+                (fc['Year'].astype(int) >= start_year)]
+    total_fc = _annual_sum(fc_sel)
+    ratio_fc = recs[ymax]['ratio']
+    share_fallback = recs[ymax]['share']
+
+    fc_years = sorted(total_fc.index.dropna().astype(int).unique())
+    frecs = {}
+    for y in fc_years:
+        t = float(total_fc.get(y, 0.0))
+        d = (t * ratio_fc) if ratio_fc is not None else None
+        share_y = (share_input.get(y, share_fallback) if share_input else share_fallback)
+        r = (d * share_y) if (d is not None and share_y is not None) else None
+        frecs[y] = dict(全产品=t, DC=d, share=share_y, ruijie=r)
+
+    prev_dc = recs[ymax]['DC']
+    prev_share = recs[ymax]['share']
+    prev_invoice = recs[ymax]['ruijie'] * (1 + vat_rate)
+    for y in fc_years:
+        rec = frecs[y]
+        dc_growth = ((rec['DC'] - prev_dc) / prev_dc) if prev_dc not in (None, 0) else None
+        comp_idx = (rec['share'] / prev_share) if prev_share not in (None, 0) else None
+        invoice = rec['ruijie'] * (1 + vat_rate) if rec['ruijie'] is not None else None
+        invoice_yoy = ((invoice - prev_invoice) / prev_invoice) if prev_invoice not in (None, 0) else None
+        rows.append({
+            '数据类型': '预测',
+            '年份': str(y),
+            '通信全产品容量': round(rec['全产品'], 2),
+            '通信DC容量': None if rec['DC'] is None else round(rec['DC'], 2),
+            'DC占全产品比例': _pct(ratio_fc),
+            '通信DC容量增速': _pct(dc_growth),
+            '锐捷DC收入': None if rec['ruijie'] is None else round(rec['ruijie'], 2),
+            '锐捷DC份额': _pct(rec['share']),
+            '竞争力指数': None if comp_idx is None else round(comp_idx, 4),
+            '增值税率': round(vat_rate * 100, 2),
+            '锐捷开票金额': None if invoice is None else round(invoice, 2),
+            '_sort': y,
+        })
+        prev_dc, prev_share, prev_invoice = rec['DC'], rec['share'], invoice
+
+    rows.sort(key=lambda r: (r['_sort'], 0 if r['数据类型'] == '实际' else 1))
+    for r in rows:
+        r.pop('_sort', None)
+
+    result_df = pd.DataFrame(rows, columns=OUT_COLS)
+    print(f"  固定版分析结果: {len(result_df)} 行")
+    return result_df
+
+
 def generate_chart_data(analysis_df):
     """生成图表数据"""
     if len(analysis_df) == 0:
         return None
-    
+
     years = analysis_df['年份'].tolist()
     dc_capacity = analysis_df['通信DC容量'].tolist()
-    ruijie_dc = analysis_df['锐捷DC容量'].tolist()
     ruijie_share = analysis_df['锐捷DC份额'].tolist()
-    
+    # 兼容第一版输出（无锐捷DC容量列时取锐捷DC收入）
+    if '锐捷DC容量' in analysis_df.columns:
+        ruijie_dc = analysis_df['锐捷DC容量'].tolist()
+    else:
+        ruijie_dc = analysis_df['锐捷DC收入'].tolist()
+
     return {
         'years': years,
         'dc_capacity': dc_capacity,

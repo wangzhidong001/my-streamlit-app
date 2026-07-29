@@ -90,13 +90,32 @@ def add_custom_param():
     st.session_state.custom_params.append({'name': '', 'value': '', 'type': 'number', 'year': None})
 
 
+def parse_year(year):
+    """解析年份字段，兼容数值、字符串以及 '2026H'/'2026E' 等后缀。"""
+    if year is None:
+        return None
+    if isinstance(year, (int, float)):
+        return int(year)
+    s = str(year).strip()
+    # 去掉 H(实际半年)/E(预测) 等后缀
+    s = s.rstrip('HhEe')
+    if s.isdigit():
+        return int(s)
+    try:
+        return int(float(s))
+    except (ValueError, TypeError):
+        return None
+
+
 def get_available_years():
     """从分析结果中获取可用年份列表"""
     analysis_path = os.path.join(proc.OUTPUT_DIR, 'IDC分析结果.xlsx')
     if os.path.exists(analysis_path):
         df = pd.read_excel(analysis_path)
         if '年份' in df.columns:
-            return sorted([int(y) for y in df['年份'].dropna().unique()])
+            years = [parse_year(y) for y in df['年份'].dropna().unique()]
+            years = [y for y in years if y is not None]
+            return sorted(set(years))
     return [2022, 2023, 2024, 2025, 2026, 2027, 2028, 2029, 2030]
 
 
@@ -192,40 +211,39 @@ if page == "🔄 数据处理":
             })
         st.dataframe(pd.DataFrame(class_data), use_container_width=True, hide_index=True)
 
-    # 检查第一阶段结果是否存在
+    # ========== 一键数据处理 ==========
     combined_file_path = os.path.join(proc.OUTPUT_DIR, 'IDC全产品数据.xlsx')
-    stage1_done = os.path.exists(combined_file_path)
 
-    # ========== 第一阶段：IDC明细数据处理 ==========
-    st.markdown("### 🚀 第一阶段：IDC明细数据处理")
-    st.caption("步骤：扫描文件 → 历史对比 → 文件分类 → 实际数汇总 → 预测数汇总 → 全产品汇总 → 保存产品文件")
+    st.markdown("### 🚀 执行数据处理")
+    st.caption("完整流程：扫描文件 → 历史对比 → 文件分类 → 实际数汇总 → 预测数汇总 → 全产品汇总 → 通信DC分析计算 → 图表生成 → 保存结果")
 
-    if st.button("▶️ 执行IDC明细数据处理", type="primary", use_container_width=True):
+    if st.button("▶️ 一键执行数据处理", type="primary", use_container_width=True):
         progress_bar = st.progress(0, text="正在初始化...")
         output_buffer = io.StringIO()
 
         with contextlib.redirect_stdout(output_buffer):
             try:
-                progress_bar.progress(10, text="步骤1: 扫描文件...")
+                # ---- 第一阶段：IDC明细数据处理 ----
+                progress_bar.progress(5, text="步骤1: 扫描文件...")
                 files = proc.scan_excel_files()
 
-                progress_bar.progress(25, text="步骤2: 历史对比...")
+                progress_bar.progress(10, text="步骤2: 历史对比...")
                 history = proc.load_history()
                 new_files, all_filenames = proc.check_new_files(files, history)
 
-                progress_bar.progress(40, text="步骤3-4: 文件分类...")
+                progress_bar.progress(15, text="步骤3-4: 文件分类...")
                 classified = proc.classify_all_files(files)
 
-                progress_bar.progress(55, text="步骤5: 实际数汇总...")
+                progress_bar.progress(25, text="步骤5: 实际数汇总...")
                 actual_results = proc.process_actual_data(classified)
 
-                progress_bar.progress(70, text="步骤6: 预测数汇总...")
+                progress_bar.progress(35, text="步骤6: 预测数汇总...")
                 forecast_results = proc.process_forecast_data(classified, actual_results)
 
-                progress_bar.progress(85, text="步骤7: 全产品汇总...")
+                progress_bar.progress(45, text="步骤7: 全产品汇总...")
                 combined = proc.combine_all_products(forecast_results)
 
-                progress_bar.progress(95, text="保存结果...")
+                progress_bar.progress(50, text="保存IDC明细结果...")
                 os.makedirs(proc.OUTPUT_DIR, exist_ok=True)
                 proc.save_product_files(forecast_results, proc.OUTPUT_DIR)
                 proc.save_combined_file(combined, proc.OUTPUT_DIR)
@@ -238,9 +256,30 @@ if page == "🔄 数据处理":
                 }
                 proc.save_history(new_history)
 
-                progress_bar.empty()
-                st.success("✅ IDC明细数据处理完成！已生成各产品文件和全产品汇总数据。")
-                st.info("⬇️ 请继续执行第二阶段：基于IDC明细数据进一步加工通信DC数据")
+                # ---- 第二阶段：通信DC数据加工 ----
+                progress_bar.progress(60, text="步骤8: 通信DC分析计算...")
+                # 注意：combined 在 save_combined_file 后可能被污染，需要 .copy() 确保数据独立性
+                analysis = proc.calculate_analysis_fixed(
+                    combined.copy(),
+                    vat_rate=config['vat_rate'],
+                )
+
+                if len(analysis) == 0:
+                    progress_bar.empty()
+                    st.warning("⚠️ 未生成分析结果，请检查数据是否包含行业口径/通信数据。")
+                else:
+                    progress_bar.progress(80, text="步骤9: 图表生成...")
+                    chart_data = proc.generate_chart_data(analysis)
+
+                    progress_bar.progress(90, text="步骤10: 保存分析结果...")
+                    proc.save_analysis_file(analysis, proc.OUTPUT_DIR)
+                    proc.save_chart_html(chart_data, proc.OUTPUT_DIR)
+                    st.session_state['analysis_df_original'] = analysis.copy()
+                    st.session_state['analysis_df_simulated'] = analysis.copy()
+
+                    progress_bar.progress(100, text="完成")
+                    progress_bar.empty()
+                    st.success("✅ 数据处理完成！已生成IDC明细数据、分析结果和图表。")
 
             except Exception as e:
                 progress_bar.empty()
@@ -253,168 +292,6 @@ if page == "🔄 数据处理":
         if log_text:
             with st.expander("📋 处理日志", expanded=True):
                 st.code(log_text, language='text')
-
-    st.markdown("---")
-
-    # ========== 第二阶段：基于IDC明细数据进一步加工通信DC数据 ==========
-    st.markdown("### 🚀 第二阶段：基于IDC明细数据进一步加工通信DC数据")
-    st.caption("步骤：读取全产品数据 → 筛选条件设置 → 分析计算 → 图表生成 → 保存分析结果")
-
-    # 初始化筛选变量（避免stage1未完成时NameError）
-    selected_persp = []
-    selected_industry = []
-    selected_deploy = []
-    selected_dc = []
-    selected_vendor = []
-    scenario_name = ""
-
-    if not stage1_done:
-        st.warning("⚠️ 尚未检测到第一阶段结果（IDC全产品数据.xlsx），请先执行第一阶段。")
-    else:
-        # 读取全产品数据获取筛选选项
-        combined_preview = pd.read_excel(combined_file_path)
-
-        # 筛选条件设置
-        st.markdown("#### 🔧 筛选条件设置")
-        st.caption("💡 不选=该条件不筛选（显示全部）；可多选。所有条件均不选=全量分析")
-
-        filter_col1, filter_col2, filter_col3 = st.columns(3)
-
-        with filter_col1:
-            persp_options = []
-            if '产品/行业' in combined_preview.columns:
-                persp_options = sorted(combined_preview['产品/行业'].dropna().unique().tolist())
-            selected_persp = st.multiselect("产品/行业口径", persp_options, help="不选=全部口径")
-
-            industry_options = []
-            if '行业大类' in combined_preview.columns:
-                industry_options = sorted(combined_preview['行业大类'].dropna().unique().tolist())
-            selected_industry = st.multiselect("行业大类", industry_options, help="不选=全部行业")
-
-        with filter_col2:
-            deploy_options = []
-            if 'Deployment' in combined_preview.columns:
-                deploy_options = sorted(combined_preview['Deployment'].dropna().unique().tolist())
-            selected_deploy = st.multiselect("Deployment", deploy_options, help="不选=全部部署方式")
-
-            dc_options = []
-            if '二级产品分类' in combined_preview.columns:
-                dc_options = sorted(combined_preview['二级产品分类'].dropna().unique().tolist())
-            selected_dc = st.multiselect("DC产品分类", dc_options, help="不选=全部DC分类")
-
-        with filter_col3:
-            vendor_options = []
-            if 'Vendor' in combined_preview.columns:
-                vendor_options = sorted(combined_preview['Vendor'].dropna().unique().tolist())
-            selected_vendor = st.multiselect("Vendor厂商", vendor_options, help="不选=全部厂商")
-
-            scenario_name = st.text_input(
-                "场景名称（可选）",
-                placeholder="如：通信行业-锐捷视角",
-                help="为空则覆盖默认结果；填写则保存为独立场景文件，方便对比不同筛选结果"
-            )
-
-        # 显示当前筛选状态
-        active_filters = []
-        if selected_persp:
-            active_filters.append(f"口径={selected_persp}")
-        if selected_industry:
-            active_filters.append(f"行业={selected_industry}")
-        if selected_deploy:
-            active_filters.append(f"Deployment={selected_deploy}")
-        if selected_dc:
-            active_filters.append(f"DC分类={selected_dc}")
-        if selected_vendor:
-            active_filters.append(f"Vendor={selected_vendor}")
-
-        if active_filters:
-            st.info(f"📋 当前筛选：{' | '.join(active_filters)}")
-        else:
-            st.info("📋 当前筛选：无（全量分析）")
-
-    if st.button("▶️ 执行通信DC数据加工", type="primary", use_container_width=True, disabled=not stage1_done):
-        progress_bar2 = st.progress(0, text="正在初始化...")
-        output_buffer2 = io.StringIO()
-
-        with contextlib.redirect_stdout(output_buffer2):
-            try:
-                progress_bar2.progress(30, text="读取全产品数据...")
-                combined = pd.read_excel(combined_file_path)
-
-                progress_bar2.progress(60, text="分析计算（应用筛选条件）...")
-                analysis = proc.calculate_analysis(
-                    combined,
-                    vat_rate=config['vat_rate'],
-                    industry_filter=selected_industry if selected_industry else None,
-                    perspective_filter=selected_persp if selected_persp else None,
-                    dc_category=selected_dc if selected_dc else None,
-                    vendor_filter=selected_vendor if selected_vendor else None,
-                    deployment_filter=selected_deploy if selected_deploy else None,
-                )
-
-                if len(analysis) == 0:
-                    progress_bar2.empty()
-                    st.warning("⚠️ 当前筛选条件下无匹配数据，请调整筛选条件后重试。")
-                else:
-                    progress_bar2.progress(80, text="图表生成...")
-                    chart_data = proc.generate_chart_data(analysis)
-
-                    progress_bar2.progress(95, text="保存结果...")
-                    if scenario_name.strip():
-                        # 场景模式：保存为独立文件
-                        safe_name = scenario_name.strip().replace(' ', '_').replace('/', '_').replace('\\', '_')
-                        proc.save_analysis_file(analysis, proc.OUTPUT_DIR, suffix=safe_name)
-                        proc.save_chart_html(chart_data, proc.OUTPUT_DIR, suffix=safe_name)
-
-                        # 存入session_state供看板使用
-                        if 'scenarios' not in st.session_state:
-                            st.session_state.scenarios = {}
-                        st.session_state.scenarios[scenario_name.strip()] = {
-                            'analysis': analysis.copy(),
-                            'filters': {
-                                'perspective': selected_persp,
-                                'industry': selected_industry,
-                                'deployment': selected_deploy,
-                                'dc_category': selected_dc,
-                                'vendor': selected_vendor,
-                            }
-                        }
-                        progress_bar2.progress(100, text="完成")
-                        progress_bar2.empty()
-                        st.success(f"✅ 场景「{scenario_name.strip()}」数据加工完成！已保存为 IDC分析结果_{safe_name}.xlsx")
-                    else:
-                        # 默认模式：覆盖默认结果
-                        proc.save_analysis_file(analysis, proc.OUTPUT_DIR)
-                        proc.save_chart_html(chart_data, proc.OUTPUT_DIR)
-                        st.session_state['analysis_df_original'] = analysis.copy()
-                        st.session_state['analysis_df_simulated'] = analysis.copy()
-                        progress_bar2.progress(100, text="完成")
-                        progress_bar2.empty()
-                        st.success("✅ 通信DC数据加工完成！已生成分析结果和图表。")
-
-            except Exception as e:
-                progress_bar2.empty()
-                st.error(f"❌ 加工失败: {str(e)}")
-                import traceback
-                st.code(traceback.format_exc())
-
-        # 显示处理日志
-        log_text2 = output_buffer2.getvalue()
-        if log_text2:
-            with st.expander("📋 处理日志", expanded=True):
-                st.code(log_text2, language='text')
-
-    # 显示已保存的场景结果
-    if 'scenarios' in st.session_state and st.session_state.scenarios:
-        st.markdown("#### 📦 已保存的场景结果")
-        for name, data in st.session_state.scenarios.items():
-            filters = data['filters']
-            filter_desc = []
-            for k, v in filters.items():
-                if v:
-                    filter_desc.append(f"{k}={v}")
-            with st.expander(f"📊 {name}（{len(data['analysis'])} 行）- {' | '.join(filter_desc) if filter_desc else '全量'}"):
-                st.dataframe(data['analysis'], use_container_width=True, hide_index=True)
 
     # 显示上次处理时间
     if history.get('last_processed'):
@@ -569,6 +446,10 @@ elif page == "📈 分析看板":
 
     analysis_df = st.session_state.analysis_df_simulated.copy()
 
+    # 兼容第一版 11 列输出（无锐捷DC容量时取锐捷DC收入）
+    if '锐捷DC容量' not in analysis_df.columns and '锐捷DC收入' in analysis_df.columns:
+        analysis_df['锐捷DC容量'] = analysis_df['锐捷DC收入']
+
     # 参数模拟
     st.markdown("### 🔧 参数模拟")
 
@@ -691,7 +572,7 @@ elif page == "📈 分析看板":
             # 应用份额参数（按年份）
             if share_params:
                 for i in range(len(work_df)):
-                    row_year = int(work_df.iloc[i]['年份'])
+                    row_year = parse_year(work_df.iloc[i]['年份'])
                     # 优先使用年份专属参数，其次使用全局参数
                     if row_year in share_params:
                         new_share = share_params[row_year]
@@ -714,17 +595,18 @@ elif page == "📈 分析看板":
                     if i > 0:
                         prev_share = work_df.iloc[i-1]['锐捷DC份额']
                         curr_share = work_df.iloc[i]['锐捷DC份额']
-                        if prev_share > 0:
+                        if prev_share is not None and prev_share > 0:
                             work_df.loc[work_df.index[i], '竞争力指数'] = round(curr_share / prev_share, 2)
 
             # 重新计算开票同比变动（所有行）
             for i in range(len(work_df)):
-                if i > 0 and work_df.iloc[i-1]['锐捷开票金额'] > 0:
+                if i > 0:
                     prev_inv = work_df.iloc[i-1]['锐捷开票金额']
                     curr_inv = work_df.iloc[i]['锐捷开票金额']
-                    work_df.loc[work_df.index[i], '开票同比变动'] = round(
-                        (curr_inv - prev_inv) / prev_inv * 100, 2
-                    )
+                    if prev_inv is not None and prev_inv > 0:
+                        work_df.loc[work_df.index[i], '开票同比变动'] = round(
+                            (curr_inv - prev_inv) / prev_inv * 100, 2
+                        )
 
             # 保存到 session_state
             st.session_state.analysis_df_simulated = work_df
