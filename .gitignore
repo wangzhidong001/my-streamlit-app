@@ -12,3 +12,6 @@ Thumbs.db
 
 # Local outputs (regenerated at runtime)
 汇总结果/
+
+# Streamlit secrets (never commit tokens/credentials)
+.streamlit/

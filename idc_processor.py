@@ -1275,11 +1275,8 @@ def generate_chart_data(analysis_df):
     years = analysis_df['年份'].tolist()
     dc_capacity = analysis_df['通信DC容量'].tolist()
     ruijie_share = analysis_df['锐捷DC份额'].tolist()
-    # 兼容第一版输出（无锐捷DC容量列时取锐捷DC收入）
-    if '锐捷DC容量' in analysis_df.columns:
-        ruijie_dc = analysis_df['锐捷DC容量'].tolist()
-    else:
-        ruijie_dc = analysis_df['锐捷DC收入'].tolist()
+    # 取锐捷DC收入（不再取锐捷DC容量）
+    ruijie_dc = analysis_df['锐捷DC收入'].tolist()
 
     return {
         'years': years,
@@ -1358,7 +1355,7 @@ def save_chart_html(chart_data, output_dir, suffix=''):
         var chart = echarts.init(document.getElementById('chart'));
         chart.setOption({{
             tooltip: {{ trigger: 'axis', axisPointer: {{ type: 'cross' }} }},
-            legend: {{ data: ['通信DC容量', '锐捷DC容量', '锐捷DC份额'] }},
+            legend: {{ data: ['通信DC容量', '锐捷DC收入', '锐捷DC份额'] }},
             grid: {{ left: '3%', right: '4%', bottom: '3%', containLabel: true }},
             xAxis: {{ type: 'category', data: data.years }},
             yAxis: [
@@ -1373,7 +1370,7 @@ def save_chart_html(chart_data, output_dir, suffix=''):
                     itemStyle: {{ color: '#5470c6' }}
                 }},
                 {{
-                    name: '锐捷DC容量',
+                    name: '锐捷DC收入',
                     type: 'bar',
                     data: data.ruijie_dc,
                     itemStyle: {{ color: '#91cc75' }}

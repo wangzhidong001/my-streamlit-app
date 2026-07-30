@@ -446,10 +446,6 @@ elif page == "📈 分析看板":
 
     analysis_df = st.session_state.analysis_df_simulated.copy()
 
-    # 兼容第一版 11 列输出（无锐捷DC容量时取锐捷DC收入）
-    if '锐捷DC容量' not in analysis_df.columns and '锐捷DC收入' in analysis_df.columns:
-        analysis_df['锐捷DC容量'] = analysis_df['锐捷DC收入']
-
     # 参数模拟
     st.markdown("### 🔧 参数模拟")
 
@@ -586,7 +582,6 @@ elif page == "📈 分析看板":
                     dc_capacity = work_df.iloc[i]['通信DC容量']
                     new_rev = round(dc_capacity * new_share / 100, 2)
                     work_df.loc[work_df.index[i], '锐捷DC收入'] = new_rev
-                    work_df.loc[work_df.index[i], '锐捷DC容量'] = new_rev
                     # 重新计算开票金额
                     work_df.loc[work_df.index[i], '锐捷开票金额'] = round(new_rev * (1 + sim_vat), 2)
 
@@ -663,8 +658,8 @@ elif page == "📈 分析看板":
         secondary_y=False
     )
     fig.add_trace(
-        go.Bar(x=analysis_df['年份'], y=analysis_df['锐捷DC容量'],
-               name='锐捷DC容量', marker_color='#91cc75'),
+        go.Bar(x=analysis_df['年份'], y=analysis_df['锐捷DC收入'],
+               name='锐捷DC收入', marker_color='#91cc75'),
         secondary_y=False
     )
     fig.add_trace(
@@ -687,6 +682,9 @@ elif page == "📈 分析看板":
     st.markdown("### 📋 分析结果明细")
 
     display_df = analysis_df.copy()
+    # 移除锐捷DC容量列（不再显示）
+    if '锐捷DC容量' in display_df.columns:
+        display_df = display_df.drop(columns=['锐捷DC容量'])
     pct_cols = ['DC占全产品比例', '通信DC容量增速', '锐捷DC份额', '开票同比变动']
     for col in pct_cols:
         if col in display_df.columns:
