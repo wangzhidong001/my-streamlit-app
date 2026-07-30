@@ -768,6 +768,11 @@ elif page == "📈 分析看板":
             display_df[col] = display_df[col].apply(
                 lambda x: f"{x}%" if pd.notna(x) else "—"
             )
+    # 增值税率：百分数值（13）→ 百分比（13%），直接加%后缀
+    if '增值税率' in display_df.columns:
+        display_df['增值税率'] = display_df['增值税率'].apply(
+            lambda x: f"{x}%" if pd.notna(x) else "—"
+        )
 
     st.dataframe(display_df, use_container_width=True, hide_index=True)
 
