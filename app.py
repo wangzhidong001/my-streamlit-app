@@ -785,11 +785,22 @@ elif page == "📈 分析看板":
 
     # 竞争力指数看板
     st.markdown("### 📈 竞争力指数看板")
-    if len(actual_data) >= 2 and '竞争力指数' in actual_data.columns:
+    # 去掉半年数据（只保留纯年份格式，过滤 H1/H2/E 后缀）
+    comp_data = actual_data.copy()
+    import re as _re
+    def _is_pure_year(y_val):
+        s = str(y_val).strip()
+        # 纯数字或纯年份格式（不含H、E等后缀）
+        return s.isdigit() or (s.endswith('年') and s[:-1].isdigit())
+    comp_data = comp_data[comp_data['年份'].apply(_is_pure_year)].reset_index(drop=True)
+
+    if len(comp_data) >= 2 and '竞争力指数' in comp_data.columns:
+        # 年份转字符串，避免 Plotly 数值轴自动插值出 2022.5/2023.5 等半年刻度
+        comp_years_str = comp_data['年份'].astype(str).tolist()
         fig_comp = go.Figure()
         fig_comp.add_trace(go.Scatter(
-            x=actual_data['年份'],
-            y=actual_data['竞争力指数'],
+            x=comp_years_str,
+            y=comp_data['竞争力指数'],
             name='竞争力指数',
             line=dict(color='#8b5cf6', width=3),
             mode='lines+markers',
@@ -801,8 +812,15 @@ elif page == "📈 分析看板":
             annotation_text="份额持平线 (1.0)", annotation_position="right"
         )
         fig_comp.update_layout(
-            title="实际数年份：竞争力指数趋势",
+            title="实际数年份：竞争力指数趋势（不含半年）",
             xaxis_title="年份",
+            xaxis=dict(
+                type='category',
+                tickmode='array',
+                tickvals=comp_years_str,
+                ticktext=comp_years_str,
+                showgrid=False
+            ),
             yaxis_title="竞争力指数",
             hovermode='x unified',
             height=400,
@@ -815,8 +833,8 @@ elif page == "📈 分析看板":
         st.plotly_chart(fig_comp, use_container_width=True)
 
         # 竞争力指数解读
-        latest_comp = actual_data.iloc[-1]['竞争力指数']
-        prev_comp = actual_data.iloc[-2]['竞争力指数'] if len(actual_data) >= 2 else None
+        latest_comp = comp_data.iloc[-1]['竞争力指数']
+        prev_comp = comp_data.iloc[-2]['竞争力指数'] if len(comp_data) >= 2 else None
         comp_delta = round(latest_comp - prev_comp, 2) if prev_comp else 0
 
         comp_cols = st.columns(3)
@@ -827,8 +845,8 @@ elif page == "📈 分析看板":
             trend = "份额提升" if latest_comp > 1 else ("份额下降" if latest_comp < 1 else "份额持平")
             st.metric("趋势判断", trend)
         with comp_cols[2]:
-            max_comp = actual_data['竞争力指数'].max()
-            max_year = actual_data[actual_data['竞争力指数'] == max_comp]['年份'].values[0]
+            max_comp = comp_data['竞争力指数'].max()
+            max_year = comp_data[comp_data['竞争力指数'] == max_comp]['年份'].values[0]
             st.metric("历史最高", f"{max_comp:.2f}", delta=f"{max_year}年")
     else:
         st.info("⚠️ 实际数数据不足，暂无法展示竞争力指数")
