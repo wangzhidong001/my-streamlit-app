@@ -455,11 +455,9 @@ elif page == "📈 分析看板":
     # 内置参数 + 自定义参数调节控件
     sim_values = {}  # 存储所有模拟参数的当前值
 
-    # 增值税率（全局）
-    sim_col1, sim_col2 = st.columns(2)
-    with sim_col1:
-        sim_vat = st.slider("增值税率（全局）", 0.01, 0.25, config['vat_rate'], 0.01, format="%.2f")
-        sim_values['增值税率'] = sim_vat
+    # 增值税率使用配置默认值（不在参数模拟区调整）
+    sim_vat = config['vat_rate']
+    sim_values['增值税率'] = sim_vat
 
     # 自定义参数按年份分组展示
     if custom_params:
@@ -546,125 +544,124 @@ elif page == "📈 分析看板":
                                 'year': y
                             }
 
-    with sim_col2:
-        if st.button("🔄 重新计算", type="primary"):
-            # 从原始数据重新计算，确保每次基于原始值
-            work_df = st.session_state.analysis_df_original.copy()
+    if st.button("🔄 重新计算", type="primary"):
+        # 从原始数据重新计算，确保每次基于原始值
+        work_df = st.session_state.analysis_df_original.copy()
 
-            # === 记录调整前的数据（按年份存一份快照） ===
-            before_by_year = {}
+        # === 记录调整前的数据（按年份存一份快照） ===
+        before_by_year = {}
+        for i in range(len(work_df)):
+            y_str = str(work_df.iloc[i]['年份'])
+            before_by_year[y_str] = {
+                '份额': work_df.iloc[i].get('锐捷DC份额'),
+                '锐捷DC收入': work_df.iloc[i].get('锐捷DC收入'),
+                '开票金额': work_df.iloc[i].get('锐捷开票金额'),
+            }
+        affected_years = set()
+
+        # 1. 增值税率影响：开票金额、开票同比变动（全局）
+        work_df['增值税率'] = round(sim_vat, 2)
+        ruijie_rev = work_df['锐捷DC收入']
+        work_df['锐捷开票金额'] = (ruijie_rev * (1 + sim_vat)).round(2)
+
+        # 2. 自定义参数影响（按年份条件应用）
+        # 收集所有"锐捷DC份额"类参数，按年份分组
+        share_params = {}  # year -> new_share_value, None表示全局
+        for key, pmeta in sim_values.items():
+            # key 可能是 (pname, year) 元组（新结构），也可能是 pname 字符串（兼容）
+            if isinstance(key, tuple):
+                pname, pyear = key
+            else:
+                pname = key
+                pyear = pmeta.get('year') if isinstance(pmeta, dict) else None
+            if '份额' in pname or 'share' in pname.lower():
+                pval = pmeta['value'] if isinstance(pmeta, dict) else pmeta
+                share_params[pyear] = float(pval)
+
+        # 应用份额参数（按年份）
+        if share_params:
             for i in range(len(work_df)):
+                row_year = parse_year(work_df.iloc[i]['年份'])
                 y_str = str(work_df.iloc[i]['年份'])
-                before_by_year[y_str] = {
-                    '份额': work_df.iloc[i].get('锐捷DC份额'),
-                    '锐捷DC收入': work_df.iloc[i].get('锐捷DC收入'),
-                    '开票金额': work_df.iloc[i].get('锐捷开票金额'),
-                }
-            affected_years = set()
-
-            # 1. 增值税率影响：开票金额、开票同比变动（全局）
-            work_df['增值税率'] = round(sim_vat, 2)
-            ruijie_rev = work_df['锐捷DC收入']
-            work_df['锐捷开票金额'] = (ruijie_rev * (1 + sim_vat)).round(2)
-
-            # 2. 自定义参数影响（按年份条件应用）
-            # 收集所有"锐捷DC份额"类参数，按年份分组
-            share_params = {}  # year -> new_share_value, None表示全局
-            for key, pmeta in sim_values.items():
-                # key 可能是 (pname, year) 元组（新结构），也可能是 pname 字符串（兼容）
-                if isinstance(key, tuple):
-                    pname, pyear = key
+                # 优先使用年份专属参数，其次使用全局参数
+                if row_year in share_params:
+                    new_share = share_params[row_year]
+                elif None in share_params:
+                    new_share = share_params[None]
                 else:
-                    pname = key
-                    pyear = pmeta.get('year') if isinstance(pmeta, dict) else None
-                if '份额' in pname or 'share' in pname.lower():
-                    pval = pmeta['value'] if isinstance(pmeta, dict) else pmeta
-                    share_params[pyear] = float(pval)
+                    continue
+                # 标记该年份受影响
+                affected_years.add(y_str)
 
-            # 应用份额参数（按年份）
-            if share_params:
-                for i in range(len(work_df)):
-                    row_year = parse_year(work_df.iloc[i]['年份'])
-                    y_str = str(work_df.iloc[i]['年份'])
-                    # 优先使用年份专属参数，其次使用全局参数
-                    if row_year in share_params:
-                        new_share = share_params[row_year]
-                    elif None in share_params:
-                        new_share = share_params[None]
-                    else:
-                        continue
-                    # 标记该年份受影响
-                    affected_years.add(y_str)
+                work_df.loc[work_df.index[i], '锐捷DC份额'] = round(new_share, 2)
+                # 重新计算：锐捷DC收入 = 通信DC容量 × 份额%
+                dc_capacity = work_df.iloc[i]['通信DC容量']
+                new_rev = round(dc_capacity * new_share / 100, 2)
+                work_df.loc[work_df.index[i], '锐捷DC收入'] = new_rev
+                # 重新计算开票金额
+                work_df.loc[work_df.index[i], '锐捷开票金额'] = round(new_rev * (1 + sim_vat), 2)
 
-                    work_df.loc[work_df.index[i], '锐捷DC份额'] = round(new_share, 2)
-                    # 重新计算：锐捷DC收入 = 通信DC容量 × 份额%
-                    dc_capacity = work_df.iloc[i]['通信DC容量']
-                    new_rev = round(dc_capacity * new_share / 100, 2)
-                    work_df.loc[work_df.index[i], '锐捷DC收入'] = new_rev
-                    # 重新计算开票金额
-                    work_df.loc[work_df.index[i], '锐捷开票金额'] = round(new_rev * (1 + sim_vat), 2)
-
-                # 重新计算竞争力指数（所有行）
-                for i in range(len(work_df)):
-                    if i > 0:
-                        prev_share = work_df.iloc[i-1]['锐捷DC份额']
-                        curr_share = work_df.iloc[i]['锐捷DC份额']
-                        if prev_share is not None and prev_share > 0:
-                            work_df.loc[work_df.index[i], '竞争力指数'] = round(curr_share / prev_share, 2)
-
-            # 增值税率单独影响开票金额（所有年份开票金额都被重算过）
-            # 如果没有份额参数，那至少所有行的开票金额都受增值税率影响
-            if not affected_years:
-                for i in range(len(work_df)):
-                    y_str = str(work_df.iloc[i]['年份'])
-                    before = before_by_year.get(y_str, {})
-                    after_inv = work_df.iloc[i].get('锐捷开票金额')
-                    if before.get('开票金额') != after_inv:
-                        affected_years.add(y_str)
-
-            # 重新计算开票同比变动（所有行）
+            # 重新计算竞争力指数（所有行）
             for i in range(len(work_df)):
                 if i > 0:
-                    prev_inv = work_df.iloc[i-1]['锐捷开票金额']
-                    curr_inv = work_df.iloc[i]['锐捷开票金额']
-                    if prev_inv is not None and prev_inv > 0:
-                        work_df.loc[work_df.index[i], '开票同比变动'] = round(
-                            (curr_inv - prev_inv) / prev_inv * 100, 2
-                        )
+                    prev_share = work_df.iloc[i-1]['锐捷DC份额']
+                    curr_share = work_df.iloc[i]['锐捷DC份额']
+                    if prev_share is not None and prev_share > 0:
+                        work_df.loc[work_df.index[i], '竞争力指数'] = round(curr_share / prev_share, 2)
 
-            # === 生成调整记录 ===
-            if 'adjust_log' not in st.session_state:
-                st.session_state.adjust_log = []
-
-            # 取本次执行时间戳作为批次标识
-            from datetime import datetime
-            batch_ts = datetime.now().strftime("%H:%M:%S")
-
-            # 收集受影响的行（按结果表中的顺序）
+        # 增值税率单独影响开票金额（所有年份开票金额都被重算过）
+        # 如果没有份额参数，那至少所有行的开票金额都受增值税率影响
+        if not affected_years:
             for i in range(len(work_df)):
                 y_str = str(work_df.iloc[i]['年份'])
-                if y_str not in affected_years:
-                    continue
                 before = before_by_year.get(y_str, {})
-                after_share = work_df.iloc[i].get('锐捷DC份额')
-                after_rev = work_df.iloc[i].get('锐捷DC收入')
                 after_inv = work_df.iloc[i].get('锐捷开票金额')
-                entry = {
-                    '批次': batch_ts,
-                    '年份': y_str,
-                    '调整前份额': before.get('份额'),
-                    '调整后份额': after_share,
-                    '调整前锐捷DC收入': before.get('锐捷DC收入'),
-                    '调整后锐捷DC收入': after_rev,
-                    '调整前开票金额': before.get('开票金额'),
-                    '调整后开票金额': after_inv,
-                }
-                st.session_state.adjust_log.append(entry)
+                if before.get('开票金额') != after_inv:
+                    affected_years.add(y_str)
 
-            # 保存到 session_state
-            st.session_state.analysis_df_simulated = work_df
-            st.success(f"✅ 已根据当前参数重新计算，本次共记录 {len(affected_years)} 个年份的调整。")
-            st.rerun()
+        # 重新计算开票同比变动（所有行）
+        for i in range(len(work_df)):
+            if i > 0:
+                prev_inv = work_df.iloc[i-1]['锐捷开票金额']
+                curr_inv = work_df.iloc[i]['锐捷开票金额']
+                if prev_inv is not None and prev_inv > 0:
+                    work_df.loc[work_df.index[i], '开票同比变动'] = round(
+                        (curr_inv - prev_inv) / prev_inv * 100, 2
+                    )
+
+        # === 生成调整记录 ===
+        if 'adjust_log' not in st.session_state:
+            st.session_state.adjust_log = []
+
+        # 取本次执行时间戳作为批次标识
+        from datetime import datetime
+        batch_ts = datetime.now().strftime("%H:%M:%S")
+
+        # 收集受影响的行（按结果表中的顺序）
+        for i in range(len(work_df)):
+            y_str = str(work_df.iloc[i]['年份'])
+            if y_str not in affected_years:
+                continue
+            before = before_by_year.get(y_str, {})
+            after_share = work_df.iloc[i].get('锐捷DC份额')
+            after_rev = work_df.iloc[i].get('锐捷DC收入')
+            after_inv = work_df.iloc[i].get('锐捷开票金额')
+            entry = {
+                '批次': batch_ts,
+                '年份': y_str,
+                '调整前份额': before.get('份额'),
+                '调整后份额': after_share,
+                '调整前锐捷DC收入': before.get('锐捷DC收入'),
+                '调整后锐捷DC收入': after_rev,
+                '调整前开票金额': before.get('开票金额'),
+                '调整后开票金额': after_inv,
+            }
+            st.session_state.adjust_log.append(entry)
+
+        # 保存到 session_state
+        st.session_state.analysis_df_simulated = work_df
+        st.success(f"✅ 已根据当前参数重新计算，本次共记录 {len(affected_years)} 个年份的调整。")
+        st.rerun()
 
     # 重置按钮
     col_r1, col_r2 = st.columns([1, 1])
@@ -711,6 +708,18 @@ elif page == "📈 分析看板":
     else:
         st.info("ℹ️ 暂无调整记录。调整参数并点击「重新计算」后，这里会记录参数调整前后的对比。")
 
+    # 生成带E后缀的显示年份（预测数据加E后缀）
+    def _year_label(row):
+        y_val = str(row['年份']).strip()
+        dtype = str(row.get('数据类型', '')).strip()
+        # 如果已经带E后缀则不再重复添加
+        if y_val.endswith('E') or y_val.endswith('e'):
+            return y_val
+        if dtype == '预测':
+            return y_val + 'E'
+        return y_val
+    chart_years = analysis_df.apply(_year_label, axis=1).tolist()
+
     # 图表
     st.markdown("### 📊 组合图：通信DC容量 & 锐捷DC份额")
     import plotly.graph_objects as go
@@ -718,24 +727,25 @@ elif page == "📈 分析看板":
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(
-        go.Bar(x=analysis_df['年份'], y=analysis_df['通信DC容量'],
+        go.Bar(x=chart_years, y=analysis_df['通信DC容量'],
                name='通信DC容量', marker_color='#5470c6'),
         secondary_y=False
     )
     fig.add_trace(
-        go.Bar(x=analysis_df['年份'], y=analysis_df['锐捷DC收入'],
+        go.Bar(x=chart_years, y=analysis_df['锐捷DC收入'],
                name='锐捷DC收入', marker_color='#91cc75'),
         secondary_y=False
     )
     fig.add_trace(
-        go.Scatter(x=analysis_df['年份'], y=analysis_df['锐捷DC份额'],
+        go.Scatter(x=chart_years, y=analysis_df['锐捷DC份额'],
                    name='锐捷DC份额', line=dict(color='#ee6666', width=3),
                    mode='lines+markers'),
         secondary_y=True
     )
     fig.update_layout(
-        title="通信DC容量与锐捷DC份额趋势",
+        title="通信DC容量与锐捷DC份额趋势（预测年份后缀为E）",
         hovermode='x unified',
+        xaxis=dict(type='category'),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         height=450
     )
@@ -747,6 +757,8 @@ elif page == "📈 分析看板":
     st.markdown("### 📋 分析结果明细")
 
     display_df = analysis_df.copy()
+    # 年份列：预测数据加E后缀
+    display_df['年份'] = display_df.apply(_year_label, axis=1)
     # 移除锐捷DC容量列（不再显示）
     if '锐捷DC容量' in display_df.columns:
         display_df = display_df.drop(columns=['锐捷DC容量'])
@@ -770,17 +782,18 @@ elif page == "📈 分析看板":
             fig2.add_trace(go.Bar(x=actual_data['年份'], y=actual_data['通信DC容量'],
                                   name='DC容量', marker_color='#10b981'))
             fig2.update_layout(title="实际数：全产品容量 vs DC容量", height=350,
-                              barmode='group')
+                              barmode='group', xaxis=dict(type='category'))
             st.plotly_chart(fig2, use_container_width=True)
         with col2:
             fig3 = go.Figure()
-            fig3.add_trace(go.Scatter(x=analysis_df['年份'], y=analysis_df['锐捷DC收入'],
+            fig3.add_trace(go.Scatter(x=chart_years, y=analysis_df['锐捷DC收入'],
                                       name='锐捷DC收入', line=dict(color='#f59e0b', width=2),
                                       mode='lines+markers'))
-            fig3.add_trace(go.Scatter(x=analysis_df['年份'], y=analysis_df['锐捷开票金额'],
+            fig3.add_trace(go.Scatter(x=chart_years, y=analysis_df['锐捷开票金额'],
                                       name='锐捷开票金额', line=dict(color='#ef4444', width=2),
                                       mode='lines+markers'))
-            fig3.update_layout(title="锐捷DC收入与开票金额", height=350)
+            fig3.update_layout(title="锐捷DC收入与开票金额（预测年份后缀为E）",
+                               height=350, xaxis=dict(type='category'))
             st.plotly_chart(fig3, use_container_width=True)
 
     # 竞争力指数看板
