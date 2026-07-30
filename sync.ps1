@@ -8,23 +8,27 @@ param(
     [string]$Message = ""
 )
 
-$ErrorActionPreference = "Stop"
 $repoPath = "C:\Users\ruijie\.trae-cn\work\6a4f8645e4b01f7722a32ca7"
 Set-Location -Path $repoPath
 
 Write-Host "=== Git status ===" -ForegroundColor Cyan
 git status --short
 
-if ([string]::IsNullOrWhiteSpace($Message)) {
-    $ts = Get-Date -Format "yyyyMMdd-HHmmss"
-    $Message = "auto-sync $ts"
-}
-
-Write-Host "Committing with message: $Message" -ForegroundColor Yellow
 git add .
-git commit -m $Message
 
-Write-Host "Pushing to origin main..." -ForegroundColor Green
-git push origin main
+$changes = git diff --cached --name-only
+if ($changes) {
+    if ([string]::IsNullOrWhiteSpace($Message)) {
+        $ts = Get-Date -Format "yyyyMMdd-HHmmss"
+        $Message = "auto-sync $ts"
+    }
+    Write-Host "Committing with message: $Message" -ForegroundColor Yellow
+    git commit -m $Message
 
-Write-Host "Done. Streamlit Cloud redeploys in 1-3 minutes." -ForegroundColor Green
+    Write-Host "Pushing to origin main..." -ForegroundColor Green
+    git push origin main
+
+    Write-Host "Done. Streamlit Cloud redeploys in 1-3 minutes." -ForegroundColor Green
+} else {
+    Write-Host "No changes to commit. Already up to date." -ForegroundColor Green
+}
