@@ -495,7 +495,7 @@ elif page == "📈 分析看板":
                             min_v, max_v, step = 0, max(pval * 3, 100), 0.1
                         else:
                             min_v, max_v, step = 0, max(pval * 3, 1000), 1
-                        sim_values[pname] = {
+                        sim_values[(pname, None)] = {
                             'value': st.slider(
                                 pname, float(min_v), float(max_v), float(pval),
                                 float(step), key=f"sim_{pname}"
@@ -503,7 +503,7 @@ elif page == "📈 分析看板":
                             'year': None
                         }
                     else:
-                        sim_values[pname] = {
+                        sim_values[(pname, None)] = {
                             'value': st.text_input(pname, str(pval), key=f"sim_{pname}"),
                             'year': None
                         }
@@ -533,7 +533,7 @@ elif page == "📈 分析看板":
                                 min_v, max_v, step = 0, max(pval * 3, 100), 0.1
                             else:
                                 min_v, max_v, step = 0, max(pval * 3, 1000), 1
-                            sim_values[pname] = {
+                            sim_values[(pname, y)] = {
                                 'value': st.slider(
                                     label, float(min_v), float(max_v), float(pval),
                                     float(step), key=f"sim_{y}_{pname}"
@@ -541,7 +541,7 @@ elif page == "📈 分析看板":
                                 'year': y
                             }
                         else:
-                            sim_values[pname] = {
+                            sim_values[(pname, y)] = {
                                 'value': st.text_input(label, str(pval), key=f"sim_{y}_{pname}"),
                                 'year': y
                             }
@@ -551,6 +551,17 @@ elif page == "📈 分析看板":
             # 从原始数据重新计算，确保每次基于原始值
             work_df = st.session_state.analysis_df_original.copy()
 
+            # === 记录调整前的数据（按年份存一份快照） ===
+            before_by_year = {}
+            for i in range(len(work_df)):
+                y_str = str(work_df.iloc[i]['年份'])
+                before_by_year[y_str] = {
+                    '份额': work_df.iloc[i].get('锐捷DC份额'),
+                    '锐捷DC收入': work_df.iloc[i].get('锐捷DC收入'),
+                    '开票金额': work_df.iloc[i].get('锐捷开票金额'),
+                }
+            affected_years = set()
+
             # 1. 增值税率影响：开票金额、开票同比变动（全局）
             work_df['增值税率'] = round(sim_vat, 2)
             ruijie_rev = work_df['锐捷DC收入']
@@ -559,9 +570,14 @@ elif page == "📈 分析看板":
             # 2. 自定义参数影响（按年份条件应用）
             # 收集所有"锐捷DC份额"类参数，按年份分组
             share_params = {}  # year -> new_share_value, None表示全局
-            for pname, pmeta in sim_values.items():
-                if '份额' in pname or 'share' in pname.lower():
+            for key, pmeta in sim_values.items():
+                # key 可能是 (pname, year) 元组（新结构），也可能是 pname 字符串（兼容）
+                if isinstance(key, tuple):
+                    pname, pyear = key
+                else:
+                    pname = key
                     pyear = pmeta.get('year') if isinstance(pmeta, dict) else None
+                if '份额' in pname or 'share' in pname.lower():
                     pval = pmeta['value'] if isinstance(pmeta, dict) else pmeta
                     share_params[pyear] = float(pval)
 
@@ -569,6 +585,7 @@ elif page == "📈 分析看板":
             if share_params:
                 for i in range(len(work_df)):
                     row_year = parse_year(work_df.iloc[i]['年份'])
+                    y_str = str(work_df.iloc[i]['年份'])
                     # 优先使用年份专属参数，其次使用全局参数
                     if row_year in share_params:
                         new_share = share_params[row_year]
@@ -576,6 +593,8 @@ elif page == "📈 分析看板":
                         new_share = share_params[None]
                     else:
                         continue
+                    # 标记该年份受影响
+                    affected_years.add(y_str)
 
                     work_df.loc[work_df.index[i], '锐捷DC份额'] = round(new_share, 2)
                     # 重新计算：锐捷DC收入 = 通信DC容量 × 份额%
@@ -593,6 +612,16 @@ elif page == "📈 分析看板":
                         if prev_share is not None and prev_share > 0:
                             work_df.loc[work_df.index[i], '竞争力指数'] = round(curr_share / prev_share, 2)
 
+            # 增值税率单独影响开票金额（所有年份开票金额都被重算过）
+            # 如果没有份额参数，那至少所有行的开票金额都受增值税率影响
+            if not affected_years:
+                for i in range(len(work_df)):
+                    y_str = str(work_df.iloc[i]['年份'])
+                    before = before_by_year.get(y_str, {})
+                    after_inv = work_df.iloc[i].get('锐捷开票金额')
+                    if before.get('开票金额') != after_inv:
+                        affected_years.add(y_str)
+
             # 重新计算开票同比变动（所有行）
             for i in range(len(work_df)):
                 if i > 0:
@@ -603,48 +632,84 @@ elif page == "📈 分析看板":
                             (curr_inv - prev_inv) / prev_inv * 100, 2
                         )
 
+            # === 生成调整记录 ===
+            if 'adjust_log' not in st.session_state:
+                st.session_state.adjust_log = []
+
+            # 取本次执行时间戳作为批次标识
+            from datetime import datetime
+            batch_ts = datetime.now().strftime("%H:%M:%S")
+
+            # 收集受影响的行（按结果表中的顺序）
+            for i in range(len(work_df)):
+                y_str = str(work_df.iloc[i]['年份'])
+                if y_str not in affected_years:
+                    continue
+                before = before_by_year.get(y_str, {})
+                after_share = work_df.iloc[i].get('锐捷DC份额')
+                after_rev = work_df.iloc[i].get('锐捷DC收入')
+                after_inv = work_df.iloc[i].get('锐捷开票金额')
+                entry = {
+                    '批次': batch_ts,
+                    '年份': y_str,
+                    '调整前份额': before.get('份额'),
+                    '调整后份额': after_share,
+                    '调整前锐捷DC收入': before.get('锐捷DC收入'),
+                    '调整后锐捷DC收入': after_rev,
+                    '调整前开票金额': before.get('开票金额'),
+                    '调整后开票金额': after_inv,
+                }
+                st.session_state.adjust_log.append(entry)
+
             # 保存到 session_state
             st.session_state.analysis_df_simulated = work_df
-            st.success("✅ 已根据当前参数重新计算")
+            st.success(f"✅ 已根据当前参数重新计算，本次共记录 {len(affected_years)} 个年份的调整。")
             st.rerun()
 
     # 重置按钮
-    if st.button("↩️ 恢复原始数据"):
-        st.session_state.analysis_df_simulated = st.session_state.analysis_df_original.copy()
-        st.success("✅ 已恢复原始数据")
-        st.rerun()
+    col_r1, col_r2 = st.columns([1, 1])
+    with col_r1:
+        if st.button("↩️ 恢复原始数据"):
+            st.session_state.analysis_df_simulated = st.session_state.analysis_df_original.copy()
+            st.success("✅ 已恢复原始数据")
+            st.rerun()
+    with col_r2:
+        if st.button("🗑 清空调整记录"):
+            if 'adjust_log' in st.session_state:
+                st.session_state.adjust_log = []
+            st.success("✅ 已清空调整记录")
+            st.rerun()
 
     # 概览指标
-    st.markdown("### 📌 核心指标")
+    st.markdown("### 📝 指标调整记录")
     actual_data = analysis_df[analysis_df['数据类型'] == '实际']
     forecast_data = analysis_df[analysis_df['数据类型'] == '预测']
 
-    m1, m2, m3, m4 = st.columns(4)
-    with m1:
-        if len(actual_data) > 0:
-            latest = actual_data.iloc[-1]
-            st.metric("最新年通信DC容量", f"{latest['通信DC容量']:,.0f}",
-                      delta=f"{latest.get('通信DC容量增速', 0)}%")
-        else:
-            st.metric("最新年通信DC容量", "—")
-    with m2:
-        if len(actual_data) > 0:
-            latest = actual_data.iloc[-1]
-            st.metric("最新年锐捷DC份额", f"{latest['锐捷DC份额']}%")
-        else:
-            st.metric("最新年锐捷DC份额", "—")
-    with m3:
-        if len(actual_data) > 0:
-            latest = actual_data.iloc[-1]
-            st.metric("最新年锐捷开票金额", f"{latest['锐捷开票金额']:,.0f}")
-        else:
-            st.metric("最新年锐捷开票金额", "—")
-    with m4:
-        if len(forecast_data) > 0:
-            last_fc = forecast_data.iloc[-1]
-            st.metric("预测末年DC容量", f"{last_fc['通信DC容量']:,.0f}")
-        else:
-            st.metric("预测末年DC容量", "—")
+    # 显示调整记录（如果存在）
+    if 'adjust_log' in st.session_state and st.session_state.adjust_log:
+        log_df = pd.DataFrame(st.session_state.adjust_log)
+        # 按用户指定顺序排列列，并去掉批次等辅助列
+        display_cols = [
+            '年份', '调整前份额', '调整后份额',
+            '调整前锐捷DC收入', '调整后锐捷DC收入',
+            '调整前开票金额', '调整后开票金额'
+        ]
+        # 只保留存在的列
+        display_cols = [c for c in display_cols if c in log_df.columns]
+        log_df = log_df[display_cols].copy()
+        # 格式化百分比和金额
+        pct_cols_log = ['调整前份额', '调整后份额']
+        for c in pct_cols_log:
+            if c in log_df.columns:
+                log_df[c] = log_df[c].apply(lambda x: f"{x}%" if pd.notna(x) else "—")
+        money_cols = ['调整前锐捷DC收入', '调整后锐捷DC收入', '调整前开票金额', '调整后开票金额']
+        for c in money_cols:
+            if c in log_df.columns:
+                log_df[c] = log_df[c].apply(lambda x: f"{x:,.2f}" if pd.notna(x) else "—")
+        st.dataframe(log_df, use_container_width=True, hide_index=True)
+        st.caption(f"累计 {len(log_df)} 条调整记录。")
+    else:
+        st.info("ℹ️ 暂无调整记录。调整参数并点击「重新计算」后，这里会记录参数调整前后的对比。")
 
     # 图表
     st.markdown("### 📊 组合图：通信DC容量 & 锐捷DC份额")
