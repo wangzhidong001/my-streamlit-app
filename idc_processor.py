@@ -12,9 +12,18 @@ from datetime import datetime
 from openpyxl import load_workbook
 
 # ============ 配置 ============
-# 数据目录：优先读取环境变量 DATA_DIR（云端部署时用，指向仓库内的 data/ 文件夹）
-# 未设置时回退到本地默认桌面路径，保证本地运行行为不变
-DATA_DIR = os.environ.get('DATA_DIR', r'C:\Users\ruijie\Desktop\IDC数据文件')
+# 数据目录自动适配：
+# 1. 优先读取环境变量 DATA_DIR（Streamlit Cloud 等云端部署）
+# 2. 本地运行时若桌面数据文件夹存在，沿用旧路径保证兼容性
+# 3. 否则使用仓库内的 ./data 目录（云端默认、本地也可直接用）
+_LOCAL_DESKTOP_DIR = r'C:\Users\ruijie\Desktop\IDC数据文件'
+if os.environ.get('DATA_DIR'):
+    DATA_DIR = os.environ.get('DATA_DIR')
+elif os.path.exists(_LOCAL_DESKTOP_DIR):
+    DATA_DIR = _LOCAL_DESKTOP_DIR
+else:
+    DATA_DIR = './data'
+
 OUTPUT_DIR = os.environ.get('OUTPUT_DIR', os.path.join(DATA_DIR, '汇总结果'))
 BACKUP_DIR = os.path.join(OUTPUT_DIR, '历史版本备份')
 HISTORY_FILE = os.path.join(OUTPUT_DIR, '处理历史记录.json')
@@ -956,9 +965,7 @@ def calculate_analysis(combined_df, vat_rate=0.13,
             r['开票同比变动'] = round((r['锐捷开票金额'] - prev_inv) / prev_inv * 100, 2)
         else:
             r['开票同比变动'] = None
-        
-        r['锐捷DC容量'] = round(ruijie_dc_revenue, 2)
-    
+
     # ===== 3.2 预测数加工 =====
     print("  --- 预测数加工 ---")
     
@@ -1079,9 +1086,7 @@ def calculate_analysis(combined_df, vat_rate=0.13,
                     result['开票同比变动'] = round((result['锐捷开票金额'] - prev_inv) / prev_inv * 100, 2) if prev_inv > 0 else None
                 else:
                     result['开票同比变动'] = None
-                
-                result['锐捷DC容量'] = round(ruijie_dc_revenue, 2)
-                
+
                 results.append(result)
                 print(f"    预测 {year}年: 全产品={total_revenue:.2f} DC={dc_revenue:.2f}")
     
@@ -1089,7 +1094,7 @@ def calculate_analysis(combined_df, vat_rate=0.13,
     result_columns = [
         '数据类型', '年份', '通信全产品容量', '通信DC容量', 'DC占全产品比例',
         '通信DC容量增速', '锐捷DC收入', '锐捷DC份额', '竞争力指数',
-        '锐捷DC容量', '增值税率', '锐捷开票金额'
+        '增值税率', '锐捷开票金额'
     ]
     
     result_df = pd.DataFrame(results)
