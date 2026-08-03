@@ -811,6 +811,9 @@ elif page == "📈 分析看板":
         # 纯数字或纯年份格式（不含H、E等后缀）
         return s.isdigit() or (s.endswith('年') and s[:-1].isdigit())
     comp_data = comp_data[comp_data['年份'].apply(_is_pure_year)].reset_index(drop=True)
+    # 过滤掉竞争力指数为空（无实际值）的年份
+    if '竞争力指数' in comp_data.columns:
+        comp_data = comp_data[comp_data['竞争力指数'].notna()].reset_index(drop=True)
 
     if len(comp_data) >= 2 and '竞争力指数' in comp_data.columns:
         # 年份转字符串，避免 Plotly 数值轴自动插值出 2022.5/2023.5 等半年刻度
