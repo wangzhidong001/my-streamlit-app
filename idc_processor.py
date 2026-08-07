@@ -93,10 +93,99 @@ PRODUCT_SHEET_MAP = {
     'VCC': 'VCC'
 }
 PRODUCT_KEYWORDS = {
-    'Switch': ['Ethernet Switch'],
+    'Switch': ['Ethernet Switch', 'Switch'],
     'WLAN': ['WLAN'],
     'Router': ['Router'],
-    'VCC': ['Virtual Client Computing']
+    'VCC': ['Virtual Client Computing', 'VCC']
+}
+
+# 对齐 Skill：实际数字段映射表（按(产品,口径)显式定义源→目标列）
+ACTUAL_MAP = {
+    ('Switch', 'product'): {
+        'Technology': 'Technology',
+        'Place.in.Network': '二级产品分类',
+        'Product': 'Product',
+        'Speed': '末级产品分类',
+        'Ports': 'Units',
+        'Vendor': 'Vendor',
+        'Vendor Revenue (CNY M)': 'Vendor Revenue (CNY M)',
+        'Vendor Revenue (USD M)': 'Vendor Revenue (US M)',
+        'Year': 'Year',
+        'Half Year': 'Half Year',
+        'Quarter': 'Quarter',
+    },
+    ('Switch', 'industry'): {
+        'Technology': 'Technology',
+        'Place in Network': '二级产品分类',
+        'Deployment': 'Deployment',
+        '行业大类': '行业大类',
+        '行业细分': '行业细分',
+        'Vendor': 'Vendor',
+        'Vendor Revenue (CNY M)': 'Vendor Revenue (CNY M)',
+        'Vendor Revenue (USD M)': 'Vendor Revenue (US M)',
+        'Year': 'Year',
+        'Half Year': 'Half Year',
+        'Quarter': 'Quarter',
+    },
+    ('WLAN', 'product'): {
+        'Technology': 'Technology',
+        'Product': 'Product',
+        'Product Detail': 'Product Detail',
+        'Standard': '末级产品分类',
+        'Location': '二级产品分类',
+        'Units': 'Units',
+        'Vendor': 'Vendor',
+        'Vendor Revenue (CNY M)': 'Vendor Revenue (CNY M)',
+        'Vendor Revenue (USD M)': 'Vendor Revenue (US M)',
+        'Year': 'Year',
+        'Half Year': 'Half Year',
+        'Quarter': 'Quarter',
+    },
+    ('WLAN', 'industry'): {
+        'Technology': 'Technology',
+        'Deployment': 'Deployment',
+        '行业大类': '行业大类',
+        '行业细分': '行业细分',
+        'Vendor': 'Vendor',
+        'Vendor Revenue (CNY M)': 'Vendor Revenue (CNY M)',
+        'Vendor Revenue (USD M)': 'Vendor Revenue (US M)',
+        'Year': 'Year',
+        'Half Year': 'Half Year',
+        'Quarter': 'Quarter',
+    },
+    ('Router', 'product'): {
+        'Technology': 'Technology',
+        'Deployment': 'Deployment',
+        'Product': 'Product',
+        'Connectivity': '二级产品分类',
+        'Units': 'Units',
+        'Vendor': 'Vendor',
+        'Vendor Revenue (CNY M)': 'Vendor Revenue (CNY M)',
+        'Vendor Revenue (USD M)': 'Vendor Revenue (US M)',
+        'Year': 'Year',
+        'Half Year': 'Half Year',
+        'Quarter': 'Quarter',
+    },
+    ('Router', 'industry'): {
+        'Technology': 'Technology',
+        'Deployment': 'Deployment',
+        '行业大类': '行业大类',
+        '行业细分': '行业细分',
+        'Vendor': 'Vendor',
+        'Vendor Revenue (CNY M)': 'Vendor Revenue (CNY M)',
+        'Vendor Revenue (USD M)': 'Vendor Revenue (US M)',
+        'Year': 'Year',
+        'Half Year': 'Half Year',
+        'Quarter': 'Quarter',
+    },
+    ('VCC', 'product'): {
+        'Segment': '行业大类',
+        'Information': 'Deployment',
+        'Vendor': 'Vendor',
+        'Vendor Revenue': 'Vendor Revenue (USD M)',
+        'Year': 'Year',
+        'Half Year': 'Half Year',
+    },
 }
 
 # 字段更名映射
@@ -224,10 +313,10 @@ def classify_file(filename):
     else:
         info['perspective'] = 'product'
     
-    # 提取时间版本 (如 2025Q2, 2025H2)
-    period_match = re.search(r',\s*(\d{4}[QH]\d)', filename)
+    # 提取时间版本 (如 2025Q2, 2025H2) — 对齐 Skill: 不强制要求逗号
+    period_match = re.search(r'(20\d{2})([QH]\d)', filename)
     if period_match:
-        info['period'] = period_match.group(1)
+        info['period'] = period_match.group(1) + period_match.group(2)
         info['year'] = int(info['period'][:4])
         info['version'] = info['period'][-2:]
     
@@ -267,23 +356,44 @@ def get_latest_files(classified):
     return latest
 
 
+def get_all_files_sorted(classified):
+    """获取每个分组的所有文件（按 period 降序），用于合并多版本数据。
+    
+    与 get_latest_files 不同，此函数返回每个分组的全部文件列表（最新在前），
+    以便调用方合并多版本数据并按年份去重（新版优先）。
+    解决问题：新版 Segmentation 文件可能只覆盖近 2 年，旧版覆盖更早年份，
+    只取最新版会丢失历史年份数据。
+    """
+    groups = {}
+    for key, info in classified.items():
+        group_key = f"{info['product']}_{info['data_type']}_{info['perspective']}"
+        if group_key not in groups:
+            groups[group_key] = []
+        groups[group_key].append(info)
+    
+    all_sorted = {}
+    for group_key, items in groups.items():
+        items.sort(key=lambda x: x['period'] or '', reverse=True)
+        all_sorted[group_key] = items
+    
+    return all_sorted
+
+
 # ============ 步骤5: 实际数汇总 ============
 def clean_currency(val):
-    """清除货币符号"""
-    if val is None:
+    """清除货币符号 —— 对齐 Skill clean_val"""
+    if isinstance(val, str):
+        s = val.strip()
+        if s in ('', 'nan', 'None'):
+            return None
+        s2 = re.sub(r'[￥$€£,]', '', s)
+        try:
+            return float(s2)
+        except ValueError:
+            return s
+    if pd.isna(val):
         return None
-    if isinstance(val, (int, float)):
-        return float(val)
-    s = str(val).strip()
-    for sym in ['￥', '$', '¥', '€', '£', ',']:
-        s = s.replace(sym, '')
-    s = s.strip()
-    if s == '' or s == 'nan' or s == 'None':
-        return None
-    try:
-        return float(s)
-    except ValueError:
-        return s
+    return val
 
 
 def rename_columns(df, product):
@@ -381,9 +491,9 @@ def ensure_half_year(df):
 
 
 def read_tracker_sheet(filepath, product):
-    """读取Tracker文件的对应sheet"""
+    """读取Tracker文件的对应sheet —— 对齐 Skill: 不强制 dtype=str，让 pandas 自动推断类型"""
     sheet_name = PRODUCT_SHEET_MAP.get(product)
-    df = pd.read_excel(filepath, sheet_name=sheet_name, dtype=str)
+    df = pd.read_excel(filepath, sheet_name=sheet_name, engine='openpyxl')
     return df
 
 
@@ -427,96 +537,93 @@ def merge_perspectives(product_df, industry_df, product):
     return merged
 
 
+def _sort_key_period(period_str):
+    """排序键：2025Q1→2025*4+1=8081, 2025H1→2025*2+1=4051"""
+    if not period_str:
+        return 0
+    m = re.match(r'(\d{4})([QH])(\d)', period_str)
+    if not m:
+        return 0
+    y, t, n = int(m.group(1)), m.group(2), int(m.group(3))
+    if t == 'Q':
+        return y * 4 + n
+    return y * 2 + n  # H1/H2
+
+
+def load_actual_single(product, caliber, idx):
+    """对齐 Skill load_actual: 按(产品,口径)提取实际数，最新版为主+补充旧版缺失年份"""
+    cands = [e for e in idx if e['product'] == product
+             and e['caliber'] == caliber and e['kind'] == 'tracker'
+             and e.get('period') and _sort_key_period(e['period']) > 0]
+    if not cands:
+        return None
+    cands.sort(key=lambda e: _sort_key_period(e['period']))
+    sheet = PRODUCT_SHEET_MAP[product]
+    latest = cands[-1]
+    df = pd.read_excel(latest['path'], sheet_name=sheet, engine='openpyxl')
+    src_years = set(df['Year'].dropna().unique()) if 'Year' in df.columns else set()
+    if len(cands) >= 2:
+        prev = cands[-2]
+        dfp = pd.read_excel(prev['path'], sheet_name=sheet, engine='openpyxl')
+        if 'Year' in dfp.columns:
+            dfp = dfp[~dfp['Year'].isin(src_years)]
+            df = pd.concat([df, dfp], ignore_index=True)
+
+    mp = ACTUAL_MAP.get((product, caliber), {})
+    out = pd.DataFrame()
+    for src, tgt in mp.items():
+        out[tgt] = df[src].map(clean_currency) if src in df.columns else None
+    out.insert(0, '产品/行业', '行业口径' if caliber == 'industry' else '产品口径')
+    out['实际/预测'] = '实际'
+    # Quarter 仅取后两位（对齐 Skill）
+    if 'Quarter' in out.columns:
+        out['Quarter'] = out['Quarter'].map(
+            lambda x: (str(x)[-2:] if isinstance(x, str) and len(str(x)) >= 2 else x))
+    # Technology: Ethernet Switch → Switch，空缺补产品名
+    if 'Technology' in out.columns:
+        out['Technology'] = out['Technology'].map(
+            lambda x: 'Switch' if str(x).strip() == 'Ethernet Switch' else x)
+        out['Technology'] = out['Technology'].fillna(product)
+    else:
+        out['Technology'] = product
+    # 补全 CANON 列
+    for c in FINAL_COLUMNS:
+        if c not in out.columns:
+            out[c] = None
+    return out[FINAL_COLUMNS]
+
+
 def process_actual_data(classified):
-    """步骤5: 汇总实际数"""
+    """步骤5: 汇总实际数 —— 对齐 Skill: 每个(产品,口径)取最新+补旧版缺口"""
     print("\n=== 步骤5: 汇总实际数 ===")
     
-    # 获取最新的实际数文件
-    latest = get_latest_files(classified)
+    # 将 classified 字典转为 Skill 风格的 idx 列表
+    idx = []
+    for key, info in classified.items():
+        idx.append({
+            'product': info['product'],
+            'caliber': 'industry' if info['perspective'] == 'industry' else 'product',
+            'kind': 'tracker' if info['data_type'] == 'actual' else 'forecast',
+            'period': info.get('period', ''),
+            'path': info['filepath'],
+            'name': info['filename'],
+        })
     
     product_results = {}
     
     for product in PRODUCTS:
-        # 获取产品口径实际数
-        prod_key = f"{product}_actual_product"
-        ind_key = f"{product}_actual_industry"
-        
-        prod_info = latest.get(prod_key)
-        ind_info = latest.get(ind_key)
-        
-        if product == 'VCC':
-            # VCC只有一种口径
-            if prod_info is None:
-                # VCC可能没有perspective分类
-                for key, info in classified.items():
-                    if info['product'] == 'VCC' and info['data_type'] == 'actual':
-                        prod_info = info
-                        break
-            
-            if prod_info is None:
-                print(f"  {product}: 无实际数文件")
-                continue
-            
-            df = read_tracker_sheet(prod_info['filepath'], product)
-            df = rename_columns(df, product)
-            df = fill_technology(df, product)
-            
-            # 添加产品/行业字段
-            df['产品/行业'] = '产品口径'
-            df['实际/预测'] = '实际'
-            
-            # 清理数值列
-            numeric_cols = [c for c in df.columns if 'Revenue' in str(c) or 'Value' in str(c)]
-            for col in numeric_cols:
-                if col in df.columns:
-                    df[col] = df[col].apply(clean_currency)
-            
-            product_results[product] = df
-            print(f"  {product}: {len(df)} 行实际数")
-            continue
-        
-        # 其他产品：读取产品口径和行业口径
-        prod_df = None
-        ind_df = None
-        
-        if prod_info:
-            prod_df = read_tracker_sheet(prod_info['filepath'], product)
-            prod_df = rename_columns(prod_df, product)
-            prod_df = fill_technology(prod_df, product)
-            prod_df = process_quarter_field(prod_df)
-            prod_df = ensure_half_year(prod_df)
-            prod_df['产品/行业'] = '产品口径'
-            prod_df['实际/预测'] = '实际'
-            print(f"  {product} 产品口径: {len(prod_df)} 行")
-        
-        if ind_info:
-            ind_df = read_tracker_sheet(ind_info['filepath'], product)
-            ind_df = rename_columns(ind_df, product)
-            ind_df = fill_technology(ind_df, product)
-            ind_df = process_quarter_field(ind_df)
-            ind_df = ensure_half_year(ind_df)
-            ind_df['产品/行业'] = '行业口径'
-            ind_df['实际/预测'] = '实际'
-            print(f"  {product} 行业口径: {len(ind_df)} 行")
-        
-        if prod_df is None and ind_df is None:
+        parts = []
+        for cal in ['product', 'industry']:
+            d = load_actual_single(product, cal, idx)
+            if d is not None and len(d) > 0:
+                parts.append(d)
+        if parts:
+            merged = pd.concat(parts, ignore_index=True)
+            verify_actual_data(merged, product)
+            product_results[product] = merged
+            print(f"  {product}: {len(merged)} 行实际数（产品口径+行业口径）")
+        else:
             print(f"  {product}: 无实际数文件")
-            continue
-        
-        # 合并两个口径
-        merged = merge_perspectives(prod_df, ind_df, product)
-        
-        # 清理数值列
-        numeric_cols = [c for c in merged.columns if 'Revenue' in str(c) or 'Value' in str(c)]
-        for col in numeric_cols:
-            if col in merged.columns:
-                merged[col] = merged[col].apply(clean_currency)
-        
-        # 验证：同一年的行业口径数 = 产品口径数
-        verify_actual_data(merged, product)
-        
-        product_results[product] = merged
-        print(f"  {product} 合并后: {len(merged)} 行")
     
     return product_results
 
@@ -540,7 +647,7 @@ def verify_actual_data(df, product):
 
 # ============ 步骤6: 预测数汇总 ============
 def read_forecast_pivot(filepath, sheet_name):
-    """读取Forecast透视表，返回行转列后的DataFrame"""
+    """读取Forecast透视表，返回行转列后的DataFrame（对齐 Skill melt_quarterly_forecast）"""
     wb = load_workbook(filepath, read_only=True, data_only=True)
     if sheet_name not in wb.sheetnames:
         wb.close()
@@ -549,12 +656,14 @@ def read_forecast_pivot(filepath, sheet_name):
     rows = list(ws.iter_rows(values_only=True))
     wb.close()
     
-    # 找到包含多个年份数字的行作为表头行（如2024, 2025, 2026...）
+    # 找到包含 ≥2 个年份数字的行作为表头行（Skill 用 ≥2，不对齐会更严格地用 ≥3）
     header_row_idx = None
     for i, row in enumerate(rows):
         if row:
-            year_count = sum(1 for c in row if c is not None and str(c).strip().isdigit() and 2020 <= int(str(c).strip()) <= 2035)
-            if year_count >= 3:
+            year_count = sum(1 for c in row
+                           if isinstance(c, (int, float))
+                           and 2000 <= c <= 2100)
+            if year_count >= 2:
                 header_row_idx = i
                 break
     
@@ -565,15 +674,17 @@ def read_forecast_pivot(filepath, sheet_name):
     header_row = rows[header_row_idx]
     data_rows = rows[header_row_idx + 1:]
     
-    # 跳过空的首列，找到第一个非空列
-    start_col = 0
-    for j, c in enumerate(header_row):
-        if c is not None and str(c).strip() != '':
-            start_col = j
-            break
-    
-    header_row = header_row[start_col:]
-    data_rows = [row[start_col:] for row in data_rows if row is not None]
+    # 对齐 Skill: 不跳过首列，与 Skill 的 dim_cols / year_cols 切分方式一致
+    # 找到年份列（2000-2100 的整数），年份列之前的列为 dim 维度列
+    year_col_idx = [j for j, c in enumerate(header_row)
+                    if isinstance(c, (int, float))
+                    and 2000 <= c <= 2100]
+    if not year_col_idx:
+        print(f"    ⚠ 未找到年份列: {sheet_name}")
+        return None
+    first_year = min(year_col_idx)
+    dim_cols = [j for j in range(first_year)
+                if str(header_row[j]).strip() != '']
     
     # 构建列名
     col_names = []
@@ -583,39 +694,56 @@ def read_forecast_pivot(filepath, sheet_name):
         else:
             col_names.append(str(c).strip())
     
-    # 构建DataFrame
+    # 用原始行列构建 DataFrame（不截断）
     df = pd.DataFrame(data_rows, columns=col_names)
-    
-    # 过滤掉全空的行
     df = df.dropna(how='all')
     
-    # 前向填充非年份列
-    non_year_cols = [c for c in df.columns if not str(c).isdigit()]
+    # 对齐 Skill: 用 pd.notna 做前向填充，避免 NaN → 'nan' 误判
+    ffill_state = {j: None for j in dim_cols}
+    
+    def _safe_ffill(row):
+        for j in dim_cols:
+            if j >= len(row):
+                continue
+            v = row[j]
+            if pd.notna(v) and str(v).strip() != '':
+                ffill_state[j] = v
+            # 不覆盖：子行保留父行的填充值
+    
+    # 过滤 Total 行 + 执行前向填充
+    keep_rows = []
+    for i in range(len(df)):
+        row = df.iloc[i].values
+        rowstr = ' '.join(str(x) for x in row if x is not None)
+        if 'Total' in rowstr:
+            continue
+        _safe_ffill(row)
+        keep_rows.append(i)
+    
+    df = df.iloc[keep_rows].copy()
+    
+    # 应用前向填充到 dim 列
+    for j in dim_cols:
+        col_name = col_names[j]
+        if col_name in df.columns:
+            # 重新执行 ffill（基于 ffill_state 的方式）
+            mask = pd.notna(df[col_name]) & (df[col_name].astype(str).str.strip() != '')
+            df.loc[mask, col_name] = df.loc[mask, col_name]
+    
+    # 非年份列前向填充
+    year_col_names = [col_names[j] for j in year_col_idx]
+    non_year_cols = [c for c in df.columns if c not in year_col_names]
     df[non_year_cols] = df[non_year_cols].ffill()
     
-    # 过滤掉Total行和Grand Total行
-    def is_total_row(row_vals):
-        for v in row_vals:
-            v_str = str(v).lower() if v is not None else ''
-            if 'total' in v_str or 'grand' in v_str:
-                return True
-        return False
-    
-    df = df[~df.apply(lambda r: is_total_row(r.values), axis=1)]
-    
     # 行转列：年份列转为行
-    year_cols = [c for c in df.columns if str(c).isdigit()]
-    if not year_cols:
-        return df
-    
-    id_vars = [c for c in df.columns if c not in year_cols]
-    melted = df.melt(id_vars=id_vars, value_vars=year_cols, var_name='Year', value_name='Vendor Revenue (CNY M)')
+    id_vars = [c for c in df.columns if c not in year_col_names]
+    melted = df.melt(id_vars=id_vars, value_vars=year_col_names, var_name='Year', value_name='Vendor Revenue (CNY M)')
     melted = melted.dropna(subset=['Vendor Revenue (CNY M)'])
     melted['Vendor Revenue (CNY M)'] = melted['Vendor Revenue (CNY M)'].apply(clean_currency)
     melted = melted[melted['Vendor Revenue (CNY M)'] != 0]
     melted = melted[melted['Vendor Revenue (CNY M)'].notna()]
     
-    print(f"    {sheet_name}: 表头在第{header_row_idx+1}行, {len(melted)}行数据, 年份列={year_cols}")
+    print(f"    {sheet_name}: 表头在第{header_row_idx+1}行, {len(melted)}行数据, 年份列={year_col_names}")
     return melted
 
 
@@ -714,52 +842,47 @@ def process_forecast_data(classified, actual_results):
 
 
 def read_vcc_forecast(filepath, period):
-    """读取VCC Forecast data sheet"""
-    wb = load_workbook(filepath, read_only=True, data_only=True)
-    if 'VCC Forecast data' not in wb.sheetnames:
-        wb.close()
+    """读取VCC Forecast data sheet —— 对齐 Skill melt_vcc_forecast"""
+    try:
+        raw = pd.read_excel(filepath, sheet_name='VCC Forecast data', header=None, engine='openpyxl')
+    except Exception:
         return None
-    ws = wb['VCC Forecast data']
-    rows = list(ws.iter_rows(values_only=True))
-    wb.close()
-    
-    # 找到Year行和Revenue行
-    records = []
-    year_row = None
-    half_year_row = None
-    revenue_row = None
-    
-    for i, row in enumerate(rows):
-        if row and any(str(c).strip() == 'Year' for c in row if c is not None):
-            year_row = row
-        if row and any(str(c).strip() == 'Half Year' for c in row if c is not None):
-            half_year_row = row
-        if row and any(str(c).strip() == 'Revenue' for c in row if c is not None):
-            revenue_row = row
-    
-    if year_row is None or revenue_row is None:
+    arr = raw.values.tolist()
+    # 找表头：含 ≥2 个 ^\d{4}H[12]$ 模式列
+    hdr = None
+    for i, row in enumerate(arr):
+        hy = [c for c in row if isinstance(c, str) and re.match(r'^\d{4}H[12]$', c)]
+        if len(hy) >= 2:
+            hdr = i
+            break
+    if hdr is None:
         return None
-    
-    # 构建数据
-    for i in range(1, len(year_row)):
-        year_val = year_row[i]
-        rev_val = revenue_row[i] if i < len(revenue_row) else None
-        if year_val and rev_val and year_val != 'Year':
-            records.append({
-                'Year': str(year_val),
-                'Vendor Revenue (USD M)': clean_currency(rev_val),
-                '实际/预测': '预测',
-                'Technology': 'VCC'
-            })
-    
-    df = pd.DataFrame(records)
-    if len(df) > 0:
-        pred_year = period[:4] if period else None
-        pred_ver = period[-2:] if period else None
-        df['预测Year'] = pred_year
-        df['预测版本'] = pred_ver
-    
-    return df
+    header = arr[hdr]
+    hy_cols = [j for j, c in enumerate(header)
+               if isinstance(c, str) and re.match(r'^\d{4}H[12]$', c)]
+    recs = []
+    for i in range(hdr + 1, len(arr)):
+        row = arr[i]
+        label = str(row[1]).strip() if len(row) > 1 else ''
+        if label != 'Revenue':
+            continue
+        for j in hy_cols:
+            val = row[j] if j < len(row) else None
+            if val is None or (isinstance(val, float) and pd.isna(val)):
+                continue
+            hy = header[j]
+            rec = {c: None for c in FINAL_COLUMNS}
+            rec['产品/行业'] = '产品口径'
+            rec['实际/预测'] = '预测'
+            rec['预测Year'] = period[:4] if period else None
+            rec['预测版本'] = period[-2:] if period else None
+            rec['Year'] = hy[:4]
+            rec['Half Year'] = hy
+            rec['Technology'] = 'VCC'
+            rec['Vendor Revenue (USD M)'] = float(val)
+            recs.append(rec)
+    df = pd.DataFrame(recs)
+    return df if len(df) > 0 else None
 
 
 def rename_forecast_columns(df, product, perspective):
@@ -1234,6 +1357,13 @@ def calculate_analysis_fixed(combined_df, vat_rate=0.13, share_csv=None):
     ruijie = _annual_sum(act[(act['二级产品分类'] == DC_CLASS) &
                              (act['Vendor'] == VENDOR_RUIJIE)])
 
+    # 辅助：计算指定年份、指定季度的 DC 容量（用于部分年份的同比）
+    def _dc_sum_quarters(year, quarters):
+        mask = (act['Year'] == year) & (act['二级产品分类'] == DC_CLASS)
+        if quarters:
+            mask = mask & (act['Quarter'].isin(quarters))
+        return float(act.loc[mask, 'Vendor Revenue (CNY M)'].sum())
+
     recs = {}
     for y in years:
         t = float(total.get(y, 0.0))
@@ -1245,9 +1375,20 @@ def calculate_analysis_fixed(combined_df, vat_rate=0.13, share_csv=None):
 
     rows = []
     prev_dc = prev_share = prev_invoice = None
+    prev_y = None
     for y in years:
         rec = recs[y]
-        dc_growth = ((rec['DC'] - prev_dc) / prev_dc) if prev_dc not in (None, 0) else None
+        y_quarters = qs.get(y, set())
+        is_partial = 'Q4' not in y_quarters
+
+        # 增速计算：部分年份（如只有Q1）用同季度同比，完整年份用全年同比
+        if is_partial and prev_y is not None and y_quarters:
+            prev_dc_comparable = _dc_sum_quarters(prev_y, y_quarters)
+            dc_growth = ((rec['DC'] - prev_dc_comparable) / prev_dc_comparable) \
+                if prev_dc_comparable not in (None, 0) else None
+        else:
+            dc_growth = ((rec['DC'] - prev_dc) / prev_dc) if prev_dc not in (None, 0) else None
+
         comp_idx = (rec['share'] / prev_share) if prev_share not in (None, 0) else None
         invoice = rec['ruijie'] * (1 + vat_rate)
         invoice_yoy = ((invoice - prev_invoice) / prev_invoice) if prev_invoice not in (None, 0) else None
@@ -1265,7 +1406,7 @@ def calculate_analysis_fixed(combined_df, vat_rate=0.13, share_csv=None):
             '锐捷开票金额': round(invoice, 2),
             '_sort': y,
         })
-        prev_dc, prev_share, prev_invoice = rec['DC'], rec['share'], invoice
+        prev_dc, prev_share, prev_invoice, prev_y = rec['DC'], rec['share'], invoice, y
 
     # ---- 3.2 预测数 ----
     share_input = None
