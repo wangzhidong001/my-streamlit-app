@@ -154,7 +154,7 @@ st.sidebar.code(config['output_dir'])
 
 # 检查输出是否存在
 if os.path.exists(proc.OUTPUT_DIR):
-    files = [f for f in os.listdir(proc.OUTPUT_DIR) if f.endswith('.xlsx')]
+    files = [f for f in os.listdir(proc.OUTPUT_DIR) if f.endswith('.xlsx') and f not in ('Switch.xlsx', 'Router.xlsx', 'WLAN.xlsx', 'VCC.xlsx')]
     st.sidebar.success(f"已有 {len(files)} 个结果文件")
 else:
     st.sidebar.warning("尚未生成结果，请先处理数据")
@@ -320,7 +320,7 @@ elif page == "📋 结果查看":
         st.warning("⚠️ 尚无处理结果，请先到「数据处理」页面执行处理")
         st.stop()
 
-    result_files = [f for f in os.listdir(proc.OUTPUT_DIR) if f.endswith('.xlsx')]
+    result_files = [f for f in os.listdir(proc.OUTPUT_DIR) if f.endswith('.xlsx') and f not in ('Switch.xlsx', 'Router.xlsx', 'WLAN.xlsx', 'VCC.xlsx')]
     if not result_files:
         st.warning("⚠️ 尚无处理结果，请先到「数据处理」页面执行处理")
         st.stop()
@@ -1111,12 +1111,6 @@ elif page == "💬 智能问答":
     analysis_path = os.path.join(proc.OUTPUT_DIR, 'IDC分析结果.xlsx')
     combined_path = os.path.join(proc.OUTPUT_DIR, 'IDC全产品数据.xlsx')
     forecast_detail_path = os.path.join(proc.OUTPUT_DIR, '2026年预测数明细.xlsx')
-    product_tables = {
-        'Switch': os.path.join(proc.OUTPUT_DIR, 'Switch.xlsx'),
-        'WLAN':   os.path.join(proc.OUTPUT_DIR, 'WLAN.xlsx'),
-        'Router': os.path.join(proc.OUTPUT_DIR, 'Router.xlsx'),
-        'VCC':    os.path.join(proc.OUTPUT_DIR, 'VCC.xlsx'),
-    }
 
     # --- 1) 分析汇总类（分析看板/图表使用的汇总数据）---
     datasets = {}  # key: dataset_id, value: {name, df, category, description}
@@ -1173,23 +1167,6 @@ elif page == "💬 智能问答":
                 }
         except Exception:
             pass
-
-    # --- 3) 单产品明细类（Switch/WLAN/Router/VCC 独立加工表）---
-    for pt, ppath in product_tables.items():
-        if os.path.exists(ppath):
-            try:
-                pdf = pd.read_excel(ppath, sheet_name=0)
-                if len(pdf) > 0:
-                    datasets['p_' + pt.lower()] = {
-                        'name': f'{pt}产品加工数据',
-                        'category': '单产品明细',
-                        'description': f'{pt}产品独立加工结果：按年份/季度/厂商/部署/行业汇总收入与出货量',
-                        'df': pdf,
-                        'year_col': 'Year',
-                        'data_type_col': '实际/预测',
-                    }
-            except Exception:
-                pass
 
     # ============================================================
     # 阶段B：数据集选择面板 + 加载状态
@@ -1251,7 +1228,7 @@ elif page == "💬 智能问答":
             '增值税率': '增值税率', '税率': '增值税率',
         }
 
-        # 全产品/单产品明细类列别名
+        # 全产品明细类列别名
         DETAIL_COLUMN_ALIAS = {
             # 收入类：收入 / 营收 / 人民币 / CNY / Revenue / 金额 全部映射到 Vendor Revenue (CNY M)
             '收入': 'Vendor Revenue (CNY M)',
@@ -1598,8 +1575,8 @@ elif page == "💬 智能问答":
                     return 'combined'
                 if 'forecast2026' in datasets:
                     return 'forecast2026'
-            # 7) 兜底优先级（combined 放在单产品表之前）
-            fallback_order = ['analysis', 'combined', 'forecast2026', 'p_switch', 'p_wlan', 'p_router', 'p_vcc']
+            # 7) 兜底优先级（不再使用单产品表，统一从全产品明细获取）
+            fallback_order = ['analysis', 'combined', 'forecast2026']
             for d in fallback_order:
                 if d in datasets:
                     return d
@@ -1724,8 +1701,6 @@ elif page == "💬 智能问答":
                                 "  指标：人民币收入 / 美元收入 / 出货量 / 台数\n"
                                 "  维度过滤（可组合）：产品 / 厂商 / 行业 / 部署方式 / 季度 / 半年 / 国家 / 区域\n"
                                 "  例：`2026年Switch锐捷人民币收入？` `Cisco 2025年Router收入？` `各厂商WLAN收入排名？`\n\n"
-                                "**🧩 单产品明细类**（Switch / WLAN / Router / VCC 独立加工表）：\n"
-                                "  例：`Switch各部署方式收入分布？` `VCC行业大类结构？` `2024Q1 WLAN出货量？`\n\n"
                                 "**统计类**：最大/最高 / 最低 / 平均 / 总和 / 排名 / 趋势 / 对比 / 分布 / 列表明细\n\n"
                                 f"**当前已加载数据集：{len(datasets_map)} 张**"
                             )
@@ -1921,7 +1896,7 @@ elif page == "💬 智能问答":
                 return ans, table_df, did
 
             else:
-                # ===== 明细类（全产品明细 / 单产品明细）=====
+                # ===== 明细类（全产品明细）=====
                 yc = ds['year_col']
                 dtc = ds['data_type_col']
 

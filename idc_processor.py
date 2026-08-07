@@ -1506,15 +1506,11 @@ def generate_chart_data(analysis_df):
 
 
 # ============ 输出文件 ============
+# 注：不再生成单产品明细文件（Switch/Router/WLAN/VCC.xlsx），
+#     问答和分析看板统一从 IDC全产品数据.xlsx 和 IDC分析结果.xlsx 获取数据。
 def save_product_files(forecast_results, output_dir):
-    """保存各产品汇总文件"""
-    os.makedirs(output_dir, exist_ok=True)
-    for product, df in forecast_results.items():
-        if df is None or len(df) == 0:
-            continue
-        fpath = os.path.join(output_dir, f'{product}.xlsx')
-        df.to_excel(fpath, sheet_name=product, index=False)
-        print(f"  保存: {product}.xlsx ({len(df)} 行)")
+    """保存各产品汇总文件 —— 已禁用，单产品明细不再独立输出"""
+    pass
 
 
 def save_combined_file(combined_df, output_dir):
