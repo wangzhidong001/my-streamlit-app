@@ -14,31 +14,51 @@ from openpyxl import load_workbook
 # ============ 配置 ============
 # 数据目录自动适配（按优先级依次尝试）：
 # 1. 环境变量 DATA_DIR（手动指定 / 云端部署）
-# 2. 硬编码桌面路径
-# 3. 通过 ~\Desktop 自动探测（兼容桌面重定向）
-# 4. 搜索常见位置（防中文路径编码问题）
+# 2. 本地运行时优先用项目内 ./data（自包含，不依赖桌面/网络盘/中文路径）
+# 3. 桌面路径（硬编码 / expanduser / 关键词搜索）作为兜底
+# 4. 兜底回 ./data
+DATA_DIR_SOURCE = ''  # 记录实际命中了哪一级探测，便于调试
+
+
+def _count_xlsx(d):
+    """统计目录下真实 .xlsx/.xls 文件数（排除 ~$ 锁文件）"""
+    if not os.path.isdir(d):
+        return 0
+    return sum(1 for f in os.listdir(d)
+               if (f.endswith('.xlsx') or f.endswith('.xls')) and not f.startswith('~$'))
+
+
 def _discover_data_dir():
     """自动发现 IDC 数据文件目录"""
-    import glob as _glob
+    global DATA_DIR_SOURCE
 
     # 1) 环境变量最高优先
     _env = os.environ.get('DATA_DIR')
     if _env and os.path.isdir(_env):
+        DATA_DIR_SOURCE = 'ENV'
         return _env
 
-    # 2) 硬编码路径
+    # 2) 本地运行时优先用项目内 ./data（已与桌面同步，43 个文件）
+    #    自包含、相对路径，不受桌面重定向/中文编码/云端容器影响
+    _local_data = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+    if _count_xlsx(_local_data) > 0:
+        DATA_DIR_SOURCE = 'LOCAL_DATA'
+        return _local_data
+
+    # 3) 桌面路径（硬编码）
     _hardcoded = r'C:\Users\ruijie\Desktop\IDC数据文件'
     if os.path.isdir(_hardcoded):
+        DATA_DIR_SOURCE = 'HARDCODED_DESKTOP'
         return _hardcoded
 
-    # 3) 通过用户主目录找 Desktop（兼容重定向/多用户）
+    # 4) 通过用户主目录找 Desktop（兼容重定向/多用户）
     _desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
     _candidate = os.path.join(_desktop, 'IDC数据文件')
     if os.path.isdir(_candidate):
+        DATA_DIR_SOURCE = 'EXPANDUSER_DESKTOP'
         return _candidate
 
-    # 4) 宽搜：在用户主目录及 Desktop 下搜索含 "IDC" 和 "数据" 的文件夹
-    #    解决中文编码/路径不一致导致硬编码路径找不到的问题
+    # 5) 宽搜：在用户主目录及 Desktop 下搜索含 "IDC" 和 "数据" 的文件夹
     for _base in [os.path.expanduser('~'), _desktop]:
         if not os.path.isdir(_base):
             continue
@@ -47,14 +67,15 @@ def _discover_data_dir():
                 _full = os.path.join(_base, _entry)
                 if not os.path.isdir(_full):
                     continue
-                # 匹配 "IDC" + "数据" 关键词
                 if 'IDC' in _entry and ('数据' in _entry or 'data' in _entry.lower()):
+                    DATA_DIR_SOURCE = 'SEARCH'
                     return _full
         except OSError:
             continue
 
-    # 5) 都没找到，返回硬编码路径（调用方会报错提示用户手动设置）
-    return _hardcoded
+    # 6) 兜底回 ./data（调用方会据文件数判断是否正常）
+    DATA_DIR_SOURCE = 'FALLBACK_DATA'
+    return _local_data
 
 
 DATA_DIR = _discover_data_dir()

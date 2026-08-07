@@ -167,7 +167,7 @@ if page == "🔄 数据处理":
     st.markdown("### 数据源状态")
 
     # 调试：显示实际数据源路径（方便排查 40 vs 43 问题）
-    st.caption(f"📂 实际数据源：`{proc.DATA_DIR}`  （共 {len(os.listdir(proc.DATA_DIR)) if os.path.isdir(proc.DATA_DIR) else '?'} 个条目）")
+    st.caption(f"📂 实际数据源：`{proc.DATA_DIR}`  （来源：{proc.DATA_DIR_SOURCE}，共 {len(os.listdir(proc.DATA_DIR)) if os.path.isdir(proc.DATA_DIR) else '?'} 个条目）")
 
     # 扫描文件
     files = proc.scan_excel_files()
