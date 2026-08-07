@@ -22,7 +22,9 @@ if os.environ.get('DATA_DIR'):
 elif os.path.exists(_LOCAL_DESKTOP_DIR):
     DATA_DIR = _LOCAL_DESKTOP_DIR
 else:
-    DATA_DIR = './data'
+    # 不再静默回退到 ./data（曾导致误读 40 个文件的旧副本）
+    # 如果桌面文件夹确实不存在，用户应在「⚙️ 参数设置」中手动指定路径
+    DATA_DIR = _LOCAL_DESKTOP_DIR  # 仍设为桌面路径，后续 scan 时会报错提示
 
 OUTPUT_DIR = os.environ.get('OUTPUT_DIR', os.path.join(DATA_DIR, '汇总结果'))
 BACKUP_DIR = os.path.join(OUTPUT_DIR, '历史版本备份')
@@ -80,6 +82,11 @@ FINAL_COLUMNS = [
 def scan_excel_files():
     """扫描IDC数据文件文件夹，只获取顶层xlsx文件"""
     files = []
+    if not os.path.isdir(DATA_DIR):
+        # 目录不存在时返回空列表并打印警告（调用方可据此提示用户）
+        import warnings
+        warnings.warn(f"数据源目录不存在: {DATA_DIR}，请检查路径或到「参数设置」中修改", RuntimeWarning)
+        return files
     for f in os.listdir(DATA_DIR):
         if f.startswith('~$'):
             continue

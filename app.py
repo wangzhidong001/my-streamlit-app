@@ -166,8 +166,13 @@ if page == "🔄 数据处理":
 
     st.markdown("### 数据源状态")
 
+    # 调试：显示实际数据源路径（方便排查 40 vs 43 问题）
+    st.caption(f"📂 实际数据源：`{proc.DATA_DIR}`  （共 {len(os.listdir(proc.DATA_DIR)) if os.path.isdir(proc.DATA_DIR) else '?'} 个条目）")
+
     # 扫描文件
     files = proc.scan_excel_files()
+    if not os.path.isdir(proc.DATA_DIR):
+        st.error(f"⚠️ 数据源目录不存在：`{proc.DATA_DIR}`\n\n请到「⚙️ 参数设置」中修改为正确路径，或确认桌面 `IDC数据文件` 文件夹未移动/重命名。")
     history = proc.load_history()
     new_files, all_filenames = proc.check_new_files(files, history)
 
