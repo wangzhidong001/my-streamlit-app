@@ -252,7 +252,10 @@ if page == "🔄 数据处理":
                 progress_bar.progress(50, text="保存IDC明细结果...")
                 os.makedirs(proc.OUTPUT_DIR, exist_ok=True)
                 proc.save_product_files(forecast_results, proc.OUTPUT_DIR)
-                proc.save_combined_file(combined, proc.OUTPUT_DIR)
+                if combined is not None:
+                    proc.save_combined_file(combined, proc.OUTPUT_DIR)
+                else:
+                    st.warning("⚠️ 全产品汇总为空，未生成合并文件。请检查处理日志确认各产品数据处理是否正常。")
 
                 # 更新历史
                 from datetime import datetime
@@ -265,10 +268,14 @@ if page == "🔄 数据处理":
                 # ---- 第二阶段：通信DC数据加工 ----
                 progress_bar.progress(60, text="步骤8: 通信DC分析计算...")
                 # 注意：combined 在 save_combined_file 后可能被污染，需要 .copy() 确保数据独立性
-                analysis = proc.calculate_analysis_fixed(
-                    combined.copy(),
-                    vat_rate=config['vat_rate'],
-                )
+                if combined is None or combined.empty:
+                    st.warning("⚠️ 全产品汇总无数据，跳过通信DC分析计算。请检查上方处理日志确认各产品是否正常产出。")
+                    analysis = pd.DataFrame()
+                else:
+                    analysis = proc.calculate_analysis_fixed(
+                        combined.copy(),
+                        vat_rate=config['vat_rate'],
+                    )
 
                 if len(analysis) == 0:
                     progress_bar.empty()

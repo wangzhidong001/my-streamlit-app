@@ -7,6 +7,6 @@ echo.
 echo 应用地址: http://localhost:8501
 echo 按 Ctrl+C 停止应用
 echo.
-cd /d "C:\Users\ruijie\Desktop\idc-app"
+cd /d "%~dp0"
 python -m streamlit run app.py --server.port 8501
 pause

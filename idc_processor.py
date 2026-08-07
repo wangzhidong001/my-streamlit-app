@@ -12,19 +12,52 @@ from datetime import datetime
 from openpyxl import load_workbook
 
 # ============ 配置 ============
-# 数据目录自动适配：
-# 1. 优先读取环境变量 DATA_DIR（Streamlit Cloud 等云端部署）
-# 2. 本地运行时若桌面数据文件夹存在，沿用旧路径保证兼容性
-# 3. 否则使用仓库内的 ./data 目录（云端默认、本地也可直接用）
-_LOCAL_DESKTOP_DIR = r'C:\Users\ruijie\Desktop\IDC数据文件'
-if os.environ.get('DATA_DIR'):
-    DATA_DIR = os.environ.get('DATA_DIR')
-elif os.path.exists(_LOCAL_DESKTOP_DIR):
-    DATA_DIR = _LOCAL_DESKTOP_DIR
-else:
-    # 不再静默回退到 ./data（曾导致误读 40 个文件的旧副本）
-    # 如果桌面文件夹确实不存在，用户应在「⚙️ 参数设置」中手动指定路径
-    DATA_DIR = _LOCAL_DESKTOP_DIR  # 仍设为桌面路径，后续 scan 时会报错提示
+# 数据目录自动适配（按优先级依次尝试）：
+# 1. 环境变量 DATA_DIR（手动指定 / 云端部署）
+# 2. 硬编码桌面路径
+# 3. 通过 ~\Desktop 自动探测（兼容桌面重定向）
+# 4. 搜索常见位置（防中文路径编码问题）
+def _discover_data_dir():
+    """自动发现 IDC 数据文件目录"""
+    import glob as _glob
+
+    # 1) 环境变量最高优先
+    _env = os.environ.get('DATA_DIR')
+    if _env and os.path.isdir(_env):
+        return _env
+
+    # 2) 硬编码路径
+    _hardcoded = r'C:\Users\ruijie\Desktop\IDC数据文件'
+    if os.path.isdir(_hardcoded):
+        return _hardcoded
+
+    # 3) 通过用户主目录找 Desktop（兼容重定向/多用户）
+    _desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
+    _candidate = os.path.join(_desktop, 'IDC数据文件')
+    if os.path.isdir(_candidate):
+        return _candidate
+
+    # 4) 宽搜：在用户主目录及 Desktop 下搜索含 "IDC" 和 "数据" 的文件夹
+    #    解决中文编码/路径不一致导致硬编码路径找不到的问题
+    for _base in [os.path.expanduser('~'), _desktop]:
+        if not os.path.isdir(_base):
+            continue
+        try:
+            for _entry in os.listdir(_base):
+                _full = os.path.join(_base, _entry)
+                if not os.path.isdir(_full):
+                    continue
+                # 匹配 "IDC" + "数据" 关键词
+                if 'IDC' in _entry and ('数据' in _entry or 'data' in _entry.lower()):
+                    return _full
+        except OSError:
+            continue
+
+    # 5) 都没找到，返回硬编码路径（调用方会报错提示用户手动设置）
+    return _hardcoded
+
+
+DATA_DIR = _discover_data_dir()
 
 OUTPUT_DIR = os.environ.get('OUTPUT_DIR', os.path.join(DATA_DIR, '汇总结果'))
 BACKUP_DIR = os.path.join(OUTPUT_DIR, '历史版本备份')
