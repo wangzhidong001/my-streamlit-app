@@ -1345,6 +1345,15 @@ def calculate_analysis_fixed(combined_df, vat_rate=0.13, share_csv=None):
         fver, start_year = qmax, ymax
     else:
         fver, start_year = 'Q4', ymax + 1
+
+    # 若目标预测版本不存在，回退到最新可用版本
+    avail_vers = sorted([v for v in fc['预测版本'].dropna().astype(str).unique()
+                         if v in ('Q1', 'Q2', 'Q3', 'Q4')])
+    if avail_vers and fver not in avail_vers:
+        old_fver = fver
+        fver = avail_vers[-1]  # 取最大可用版本
+        print(f"  预测版本 {old_fver} 不存在，回退到最新可用版本 {fver}")
+
     print(f"  实际最大年={ymax}({qmax}) -> 预测版本={fver}, 起始年={start_year}")
 
     # ---- 3.1 实际数 ----
@@ -1435,9 +1444,17 @@ def calculate_analysis_fixed(combined_df, vat_rate=0.13, share_csv=None):
         r = (d * share_y) if (d is not None and share_y is not None) else None
         frecs[y] = dict(全产品=t, DC=d, share=share_y, ruijie=r)
 
-    prev_dc = recs[ymax]['DC']
-    prev_share = recs[ymax]['share']
-    prev_invoice = recs[ymax]['ruijie'] * (1 + vat_rate)
+    # 预测数基准：若实际最大年是部分年，则以上一年全年为基准
+    is_partial_ymax = 'Q4' not in qs.get(ymax, set())
+    if is_partial_ymax and (ymax - 1) in recs:
+        prev_dc = recs[ymax - 1]['DC']
+        prev_share = recs[ymax - 1]['share']
+        prev_invoice = recs[ymax - 1]['ruijie'] * (1 + vat_rate)
+    else:
+        prev_dc = recs[ymax]['DC']
+        prev_share = recs[ymax]['share']
+        prev_invoice = recs[ymax]['ruijie'] * (1 + vat_rate)
+
     for y in fc_years:
         rec = frecs[y]
         dc_growth = ((rec['DC'] - prev_dc) / prev_dc) if prev_dc not in (None, 0) else None
