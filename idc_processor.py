@@ -13,9 +13,10 @@ from openpyxl import load_workbook
 
 # ============ 配置 ============
 # 数据目录自动适配（按优先级依次尝试）：
-# 1. 环境变量 DATA_DIR（云端部署 / 手动指定专用，最高优先）
-# 2. 桌面 IDC数据文件（本地实际数据源，硬编码 / expanduser / 关键词搜索）
-# 3. 项目内 ./data（自包含兜底，云端容器内无桌面时回退）
+# 1. 环境变量 DATA_DIR（手动指定 / 云端部署）
+# 2. 本地运行时优先用项目内 ./data（自包含，不依赖桌面/网络盘/中文路径）
+# 3. 桌面路径（硬编码 / expanduser / 关键词搜索）作为兜底
+# 4. 兜底回 ./data
 DATA_DIR_SOURCE = ''  # 记录实际命中了哪一级探测，便于调试
 
 
@@ -31,26 +32,33 @@ def _discover_data_dir():
     """自动发现 IDC 数据文件目录"""
     global DATA_DIR_SOURCE
 
-    # 1) 环境变量最高优先（云端部署 / 手动指定）
+    # 1) 环境变量最高优先
     _env = os.environ.get('DATA_DIR')
     if _env and os.path.isdir(_env):
         DATA_DIR_SOURCE = 'ENV'
         return _env
 
-    # 2) 本地实际数据源：桌面 IDC数据文件（硬编码）
+    # 2) 本地运行时优先用项目内 ./data（已与桌面同步，43 个文件）
+    #    自包含、相对路径，不受桌面重定向/中文编码/云端容器影响
+    _local_data = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+    if _count_xlsx(_local_data) > 0:
+        DATA_DIR_SOURCE = 'LOCAL_DATA'
+        return _local_data
+
+    # 3) 桌面路径（硬编码）
     _hardcoded = r'C:\Users\ruijie\Desktop\IDC数据文件'
     if os.path.isdir(_hardcoded):
         DATA_DIR_SOURCE = 'HARDCODED_DESKTOP'
         return _hardcoded
 
-    # 3) 通过用户主目录找 Desktop（兼容重定向/多用户）
+    # 4) 通过用户主目录找 Desktop（兼容重定向/多用户）
     _desktop = os.path.join(os.path.expanduser('~'), 'Desktop')
     _candidate = os.path.join(_desktop, 'IDC数据文件')
     if os.path.isdir(_candidate):
         DATA_DIR_SOURCE = 'EXPANDUSER_DESKTOP'
         return _candidate
 
-    # 4) 宽搜：在用户主目录及 Desktop 下搜索含 "IDC" 和 "数据" 的文件夹
+    # 5) 宽搜：在用户主目录及 Desktop 下搜索含 "IDC" 和 "数据" 的文件夹
     for _base in [os.path.expanduser('~'), _desktop]:
         if not os.path.isdir(_base):
             continue
@@ -65,8 +73,7 @@ def _discover_data_dir():
         except OSError:
             continue
 
-    # 5) 兜底回 ./data（云端容器无桌面时自包含运行）
-    _local_data = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+    # 6) 兜底回 ./data（调用方会据文件数判断是否正常）
     DATA_DIR_SOURCE = 'FALLBACK_DATA'
     return _local_data
 
@@ -1506,31 +1513,12 @@ def save_product_files(forecast_results, output_dir):
     pass
 
 
-def _safe_to_excel(df, fpath, sheet_name):
-    """安全写 Excel：目标文件若存在且被占用，先重命名为时间戳备份，再写入新文件。
-    若重命名也失败（文件被强锁），抛出带可操作提示的 PermissionError。
-    """
-    os.makedirs(os.path.dirname(fpath), exist_ok=True)
-    if os.path.exists(fpath):
-        base, ext = os.path.splitext(fpath)
-        backup = f"{base}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{ext}"
-        try:
-            os.rename(fpath, backup)
-            print(f"  [备份] 旧文件已重命名为: {os.path.basename(backup)}")
-        except PermissionError as e:
-            raise PermissionError(
-                f"无法写入 {fpath}，目标文件被其他程序占用。"
-                f"请关闭正在打开该文件的 Excel/WPS/预览窗口后重试。"
-            ) from e
-    df.to_excel(fpath, sheet_name=sheet_name, index=False)
-
-
 def save_combined_file(combined_df, output_dir):
     """保存全产品汇总文件"""
     if combined_df is None:
         return
     fpath = os.path.join(output_dir, 'IDC全产品数据.xlsx')
-    _safe_to_excel(combined_df, fpath, 'IDC全产品数据')
+    combined_df.to_excel(fpath, sheet_name='IDC全产品数据', index=False)
     print(f"  保存: IDC全产品数据.xlsx ({len(combined_df)} 行)")
 
 
@@ -1546,7 +1534,7 @@ def save_analysis_file(analysis_df, output_dir, suffix=''):
         return
     filename = f'IDC分析结果{f"_{suffix}" if suffix else ""}.xlsx'
     fpath = os.path.join(output_dir, filename)
-    _safe_to_excel(analysis_df, fpath, '分析结果')
+    analysis_df.to_excel(fpath, sheet_name='分析结果', index=False)
     print(f"  保存: {filename} ({len(analysis_df)} 行)")
 
 
@@ -1618,17 +1606,6 @@ def save_chart_html(chart_data, output_dir, suffix=''):
 </html>'''
     
     fpath = os.path.join(output_dir, f'IDC图表{f"_{suffix}" if suffix else ""}.html')
-    if os.path.exists(fpath):
-        base, ext = os.path.splitext(fpath)
-        backup = f"{base}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{ext}"
-        try:
-            os.rename(fpath, backup)
-            print(f"  [备份] 旧图表已重命名为: {os.path.basename(backup)}")
-        except PermissionError as e:
-            raise PermissionError(
-                f"无法写入 {fpath}，目标文件被其他程序占用。"
-                f"请关闭正在打开该文件的浏览器/Excel/WPS/预览窗口后重试。"
-            ) from e
     with open(fpath, 'w', encoding='utf-8') as f:
         f.write(html)
     print(f"  保存: IDC图表{f'_{suffix}' if suffix else ''}.html")
