@@ -15,6 +15,26 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import idc_processor as proc
 
+# ============ 读取缓存（性能优化） ============
+# 按「文件路径 + 修改时间」缓存 Excel 读取，避免页面切换/筛选时重复解析大文件；
+# 文件更新（重新跑数据处理）后 mtime 变化，缓存自动失效并重新读取。
+@st.cache_data
+def load_excel_cached(path: str, mtime: float):
+    """带版本（mtime）缓存的 Excel 读取。"""
+    return pd.read_excel(path, sheet_name=0)
+
+
+@st.cache_data(ttl=120)
+def scan_excel_cached(data_dir: str):
+    """缓存目录扫描结果（2 分钟 TTL），加速进入『数据处理』页。"""
+    saved = proc.DATA_DIR
+    proc.DATA_DIR = data_dir
+    try:
+        return proc.scan_excel_files()
+    finally:
+        proc.DATA_DIR = saved
+
+
 # ============ 页面配置 ============
 st.set_page_config(
     page_title="IDC 数据处理分析平台",
@@ -169,8 +189,8 @@ if page == "🔄 数据处理":
     # 调试：显示实际数据源路径（方便排查 40 vs 43 问题）
     st.caption(f"📂 实际数据源：`{proc.DATA_DIR}`  （来源：{proc.DATA_DIR_SOURCE}，共 {len(os.listdir(proc.DATA_DIR)) if os.path.isdir(proc.DATA_DIR) else '?'} 个条目）")
 
-    # 扫描文件
-    files = proc.scan_excel_files()
+    # 扫描文件（缓存：2 分钟 TTL，避免每次进入页面都重扫）
+    files = scan_excel_cached(proc.DATA_DIR)
     if not os.path.isdir(proc.DATA_DIR):
         st.error(f"⚠️ 数据源目录不存在：`{proc.DATA_DIR}`\n\n请到「⚙️ 参数设置」中修改为正确路径，或确认桌面 `IDC数据文件` 文件夹未移动/重命名。")
     history = proc.load_history()
@@ -331,7 +351,7 @@ elif page == "📋 结果查看":
 
     if selected_file:
         file_path = os.path.join(proc.OUTPUT_DIR, selected_file)
-        df = pd.read_excel(file_path)
+        df = load_excel_cached(file_path, os.path.getmtime(file_path))
 
         # 概览指标
         col1, col2, col3, col4 = st.columns(4)
@@ -1123,7 +1143,7 @@ elif page == "💬 智能问答":
         use_simulated = True
     elif os.path.exists(analysis_path):
         try:
-            analysis_df = pd.read_excel(analysis_path, sheet_name=0)
+            analysis_df = load_excel_cached(analysis_path, os.path.getmtime(analysis_path))
         except Exception:
             analysis_df = None
 
@@ -1140,7 +1160,7 @@ elif page == "💬 智能问答":
     # --- 2) 全产品明细类 ---
     if os.path.exists(combined_path):
         try:
-            cdf = pd.read_excel(combined_path, sheet_name=0)
+            cdf = load_excel_cached(combined_path, os.path.getmtime(combined_path))
             if len(cdf) > 0:
                 datasets['combined'] = {
                     'name': 'IDC全产品数据（全明细）',
@@ -1155,7 +1175,7 @@ elif page == "💬 智能问答":
 
     if os.path.exists(forecast_detail_path):
         try:
-            fdf = pd.read_excel(forecast_detail_path, sheet_name=0)
+            fdf = load_excel_cached(forecast_detail_path, os.path.getmtime(forecast_detail_path))
             if len(fdf) > 0:
                 datasets['forecast2026'] = {
                     'name': '2026年预测数明细',
