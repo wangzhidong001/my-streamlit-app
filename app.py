@@ -1629,7 +1629,8 @@ elif page == "💬 智能问答":
             yc = ds_meta['year_col']
             dtc = ds_meta['data_type_col']
             if years and yc in dfc.columns:
-                dfc = dfc[dfc[yc].astype(int).isin(years)]
+                _yn = dfc[yc].astype(str).str.extract(r'(\d{4})')[0].astype(float)
+                dfc = dfc[_yn.isin([float(y) for y in years])]
             if dtype_filter and dtc in dfc.columns:
                 # 兼容实际/预测 或 实际数/预测数
                 dfc = dfc[dfc[dtc].astype(str).str.contains(dtype_filter, na=False)]
@@ -1802,15 +1803,28 @@ elif page == "💬 智能问答":
                 ans_parts = [f"🔍 数据来源：**{ds['name']}**"]
                 table_df = None
 
+                def _year_num(y):
+                    """从年份列值中提取4位数字年份，支持 2026 / 2026H / 2026E / 2026Q1 等。"""
+                    s = str(y).strip()
+                    m = _qa_re.search(r'(\d{4})', s)
+                    return int(m.group(1)) if m else None
+
                 def _alabel(r):
                     y = str(r[yc]).strip()
                     if str(r[dtc]).strip() == '预测' and not y.endswith('E'):
                         return y + 'E'
                     return y
 
+                def _ensure_year_col(df):
+                    """确保 df 中存在正确格式的'年份'列；若已存在则先删除再重建，避免 insert 重复列报错。"""
+                    if '年份' in df.columns:
+                        df = df.drop(columns=['年份'])
+                    df.insert(0, '年份', df.apply(_alabel, axis=1))
+                    return df
+
                 if agg == 'list':
                     table_df = df_valid[[yc, dtc, metric_col_real]].copy()
-                    table_df.insert(0, '年份', table_df.apply(_alabel, axis=1))
+                    table_df = _ensure_year_col(table_df)
                     table_df[metric_display] = table_df[metric_col_real].apply(lambda v: _fmt(v, metric_display))
                     table_df = table_df[['年份', dtc, metric_display]].rename(columns={dtc: '数据类型'})
                     ans_parts.append(f"📋 历年「{metric_display}」明细（{ds['name']}）")
@@ -1825,7 +1839,7 @@ elif page == "💬 智能问答":
                         f"- 数值：**{_fmt(bv, metric_display)}**"
                     )
                     top5 = df_valid.sort_values(metric_col_real, ascending=(agg == 'min')).head(5)[[yc, dtc, metric_col_real]].copy()
-                    top5.insert(0, '年份', top5.apply(_alabel, axis=1))
+                    top5 = _ensure_year_col(top5)
                     top5[metric_display] = top5[metric_col_real].apply(lambda v: _fmt(v, metric_display))
                     table_df = top5[['年份', metric_display]]
                 elif agg in ['mean', 'sum', 'count']:
@@ -1841,7 +1855,7 @@ elif page == "💬 智能问答":
                 elif agg == 'rank':
                     dfs = df_valid.sort_values(metric_col_real, ascending=False).reset_index(drop=True)
                     dfs.insert(0, '排名', range(1, len(dfs) + 1))
-                    dfs.insert(0, '年份', dfs.apply(_alabel, axis=1))
+                    dfs = _ensure_year_col(dfs)
                     dfs[metric_display] = dfs[metric_col_real].apply(lambda v: _fmt(v, metric_display))
                     table_df = dfs[['排名', '年份', metric_display]]
                     ans_parts.append(f"🏆 按「{metric_display}」从高到低排名：")
@@ -1858,7 +1872,7 @@ elif page == "💬 智能问答":
                         f"- 变化方向：**{drc}**，差值 **{_fmt(delta, metric_display)}**（{pct:+.2f}%）"
                     )
                     tdf = df_valid[[yc, dtc, metric_col_real]].copy()
-                    tdf.insert(0, '年份', tdf.apply(_alabel, axis=1))
+                    tdf = _ensure_year_col(tdf)
                     yoy = []; pv = None
                     for _, row in tdf.iterrows():
                         v = row[metric_col_real]
@@ -1870,7 +1884,7 @@ elif page == "💬 智能问答":
                     table_df = tdf[['年份', metric_display, '同比']]
                 elif agg == 'compare':
                     if len(years) >= 2:
-                        tdf = df_valid[df_valid[yc].astype(int).isin(years)]
+                        tdf = df_valid[df_valid[yc].apply(_year_num).isin(years)]
                     else:
                         tdf = df_valid.tail(2)
                     if len(tdf) < 2:
@@ -1894,7 +1908,7 @@ elif page == "💬 智能问答":
                     if years:
                         rows = []; found = False
                         for y in years:
-                            mt = df_valid[df_valid[yc].astype(int) == y]
+                            mt = df_valid[df_valid[yc].apply(_year_num) == y]
                             if len(mt) > 0:
                                 found = True
                                 for _, r in mt.iterrows():
@@ -1909,7 +1923,7 @@ elif page == "💬 智能问答":
                         yy = _alabel(r); v = r[metric_col_real]
                         ans_parts.append(f"✅ 最新数据（{yy}年）：「{metric_display}」 = **{_fmt(v, metric_display)}**")
                         last3 = df_valid.tail(3).copy()
-                        last3.insert(0, '年份', last3.apply(_alabel, axis=1))
+                        last3 = _ensure_year_col(last3)
                         last3[metric_display] = last3[metric_col_real].apply(lambda x: _fmt(x, metric_display))
                         table_df = last3[['年份', metric_display]]
                 ans = "\n\n".join(ans_parts)
@@ -2150,7 +2164,7 @@ elif page == "💬 智能问答":
                 elif agg == 'compare':
                     s = year_agg.sort_values('年份_raw').reset_index(drop=True)
                     if len(years) >= 2:
-                        tdf = s[s['年份_raw'].astype(int).isin(years)]
+                        tdf = s[s['年份_raw'].astype(str).str.extract(r'(\d{4})')[0].astype(float).isin([float(y) for y in years])]
                     else:
                         tdf = s.tail(2)
                     if len(tdf) < 2:
@@ -2173,7 +2187,7 @@ elif page == "💬 智能问答":
                         s = year_agg
                         rows = []; found = False
                         for y in years:
-                            mt = s[s['年份_raw'].astype(int) == y]
+                            mt = s[s['年份_raw'].astype(str).str.extract(r'(\d{4})')[0].astype(float) == float(y)]
                             if len(mt) > 0:
                                 found = True
                                 for _, r in mt.iterrows():
