@@ -1809,17 +1809,25 @@ elif page == "💬 智能问答":
                     m = _qa_re.search(r'(\d{4})', s)
                     return int(m.group(1)) if m else None
 
-                def _alabel(r):
-                    y = str(r[yc]).strip()
-                    if str(r[dtc]).strip() == '预测' and not y.endswith('E'):
+                def _alabel_raw(y, dtype):
+                    """根据原始年份值和数据类型，生成展示用年份标签（预测年加 E 后缀）。"""
+                    y = str(y).strip()
+                    if str(dtype).strip() == '预测' and not y.endswith('E'):
                         return y + 'E'
                     return y
 
+                def _alabel(r):
+                    return _alabel_raw(r[yc], r[dtc])
+
                 def _ensure_year_col(df):
-                    """确保 df 中存在正确格式的'年份'列；若已存在则先删除再重建，避免 insert 重复列报错。"""
+                    """确保 df 中存在正确格式的'年份'列；若已存在则先删除再重建，避免 insert 重复列报错。
+                    兼容 yc 原始列名就是 '年份' 的情况。"""
+                    raw_col = '_raw_year_for_label'
+                    df[raw_col] = df[yc].copy()
                     if '年份' in df.columns:
                         df = df.drop(columns=['年份'])
-                    df.insert(0, '年份', df.apply(_alabel, axis=1))
+                    df.insert(0, '年份', df.apply(lambda r: _alabel_raw(r[raw_col], r[dtc]), axis=1))
+                    df = df.drop(columns=[raw_col])
                     return df
 
                 if agg == 'list':
